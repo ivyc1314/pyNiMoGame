@@ -44,13 +44,13 @@ MENU_PANEL_BG = (217, 191, 144, 55)
 MENU_PANEL_EDGE_DARK = (86, 58, 33)
 MENU_PANEL_EDGE_GOLD = (191, 149, 72)
 MENU_TITLE_GLOW = (224, 178, 88)
-MENU_TITLE_TEXT = (250, 233, 195)
+MENU_TITLE_TEXT = (255, 255, 255)
 MENU_LABEL_COLOR = (246, 232, 202)
 MENU_LABEL_SHADOW = (22, 12, 8)
 MENU_BUTTON_PALETTE = {
     "base": (108, 73, 42),
     "highlight": (136, 94, 56),
-    "text": (248, 226, 186),
+    "text": (255, 255, 255),
     "border": (194, 155, 80),
     "shadow": (0, 0, 0, 80),
 }
@@ -193,11 +193,23 @@ def main():
             icons.append(icon)
         return icons
 
-    png_images = sorted(glob.glob(os.path.join(picture_dir, "*.png")))
-    jpg_images = sorted(glob.glob(os.path.join(picture_dir, "*.jpg")))
-    jpg_images += sorted(glob.glob(os.path.join(picture_dir, "*.jpeg")))
+    def find_asset_path(stem):
+        for ext in ("png", "jpg", "jpeg", "bmp", "webp"):
+            path = os.path.join(picture_dir, f"{stem}.{ext}")
+            if os.path.exists(path):
+                return path
+        return None
 
-    table_path = min(png_images, key=os.path.getsize) if png_images else None
+    png_images = sorted(glob.glob(os.path.join(picture_dir, "*.png")))
+    table_path = find_asset_path("\u684c\u5b50")
+    if not table_path:
+        table_candidates = [
+            p for p in png_images if "\u684c" in os.path.splitext(os.path.basename(p))[0]
+        ]
+        if table_candidates:
+            table_path = min(table_candidates, key=os.path.getsize)
+        elif png_images:
+            table_path = min(png_images, key=os.path.getsize)
     if table_path:
         try:
             battle_bg = pygame.image.load(table_path).convert()
@@ -205,19 +217,21 @@ def main():
         except pygame.error:
             battle_bg = None
 
-    piece_sheet_path = max(jpg_images, key=os.path.getsize) if jpg_images else None
-    if not piece_sheet_path and png_images:
-        piece_sheet_path = max(png_images, key=os.path.getsize)
-    if piece_sheet_path:
-        battle_piece_icons = extract_icons_from_sheet(
-            piece_sheet_path, target_h=58, split_components=True
-        )
+    piece_paths = [
+        find_asset_path("\u68cb\u5b501"),
+        find_asset_path("\u68cb\u5b502"),
+        find_asset_path("\u68cb\u5b503"),
+    ]
+    for piece_path in piece_paths:
+        if not piece_path:
+            continue
+        icons = extract_icons_from_sheet(piece_path, target_h=58, split_components=False)
+        if icons:
+            battle_piece_icons.append(icons[0])
 
-    broken_sheet_path = None
-    if len(png_images) >= 2:
-        non_table_pngs = [p for p in png_images if p != table_path]
-        if non_table_pngs:
-            broken_sheet_path = max(non_table_pngs, key=os.path.getsize)
+    broken_sheet_path = find_asset_path("\u7834\u788e\u7684\u68cb\u5b50")
+    if not broken_sheet_path:
+        broken_sheet_path = find_asset_path("\u7834\u788e\u68cb\u5b50")
     if broken_sheet_path:
         broken_piece_icons = extract_icons_from_sheet(
             broken_sheet_path, target_h=62, split_components=False
@@ -250,6 +264,7 @@ def main():
 
     game_state = "main_menu"
     rows = [[True for _ in range(count)] for count in ROW_INIT]
+    piece_icon_map = []
     winner = None
 
     selecting = False
@@ -349,6 +364,15 @@ def main():
             if nim_sum != 0:
                 return rows
 
+    def reset_piece_icon_map():
+        nonlocal piece_icon_map
+        if not battle_piece_icons:
+            piece_icon_map = []
+            return
+        piece_icon_map = [
+            [random.randrange(len(battle_piece_icons)) for _ in row] for row in rows
+        ]
+
     def clear_round_state():
         nonlocal winner, selecting, select_row, select_start, select_end
         nonlocal select_bounds, select_touched, slash_points, last_pos, cancel_hover
@@ -372,6 +396,7 @@ def main():
             rows = [[True for _ in range(c)] for c in generate_rows()]
         else:
             rows = [[True for _ in range(c)] for c in ROW_INIT]
+        reset_piece_icon_map()
         clear_round_state()
         current_player = first
         if match_mode == "best3" or quick_mode:
@@ -756,13 +781,25 @@ def main():
 
                     if rows[row_idx][idx]:
                         if battle_piece_icons:
-                            icon = battle_piece_icons[
-                                (row_idx * len(row) + idx) % len(battle_piece_icons)
-                            ]
+                            icon_idx = (row_idx * len(row) + idx) % len(
+                                battle_piece_icons
+                            )
+                            if (
+                                row_idx < len(piece_icon_map)
+                                and idx < len(piece_icon_map[row_idx])
+                            ):
+                                icon_idx = piece_icon_map[row_idx][idx] % len(
+                                    battle_piece_icons
+                                )
+                            icon = battle_piece_icons[icon_idx]
                             if selected:
-                                glow_r = max(RADIUS + 7, icon.get_width() // 2 + 6)
+                                piece_r = min(icon.get_width(), icon.get_height()) // 2
+                                glow_r = max(RADIUS, piece_r - 1)
+                                glow_r = min(glow_r, RADIUS + 5)
+                                left_shift = 4 + int(glow_r * 0.25)
+                                ring_center = (int(x) - left_shift, int(y))
                                 pygame.draw.circle(
-                                    screen, CIRCLE_HL, (int(x), int(y)), glow_r
+                                    screen, CIRCLE_HL, ring_center, glow_r, 3
                                 )
                             icon_rect = icon.get_rect(center=(int(x), int(y)))
                             screen.blit(icon, icon_rect)
