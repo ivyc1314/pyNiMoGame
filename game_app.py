@@ -107,10 +107,12 @@ def main():
     small_font = pick_font(22)
     button_font = pick_font(26)
 
-    bg_surface, bg_clouds = build_background()
+    bg_surface = None
+    bg_clouds = None
     menu_bg = None
     menu_states = {"main_menu", "single_menu", "quick_menu", "custom_menu", "rules"}
     picture_dir = os.path.join(os.path.dirname(__file__), "picture")
+    music_dir = os.path.join(os.path.dirname(__file__), "music")
     menu_bg_candidates = []
     for ext in ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp"):
         menu_bg_candidates.extend(sorted(glob.glob(os.path.join(picture_dir, ext))))
@@ -129,6 +131,30 @@ def main():
             menu_bg = pygame.transform.smoothscale(menu_bg, (WIDTH, HEIGHT))
         except pygame.error:
             menu_bg = None
+
+    loading_font = pick_font(38)
+
+    def draw_loading_screen(message="\u52a0\u8f7d\u4e2d..."):
+        if menu_bg is not None:
+            screen.blit(menu_bg, (0, 0))
+        elif bg_surface is not None and bg_clouds is not None:
+            screen.blit(bg_surface, (0, 0))
+            screen.blit(bg_clouds, (0, 0))
+        else:
+            screen.fill((24, 18, 12))
+        loading_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        loading_overlay.fill((8, 6, 4, 64))
+        screen.blit(loading_overlay, (0, 0))
+        shadow = loading_font.render(message, True, (26, 16, 10))
+        label = loading_font.render(message, True, (246, 231, 197))
+        center = (WIDTH // 2, HEIGHT // 2)
+        screen.blit(shadow, shadow.get_rect(center=(center[0] + 2, center[1] + 2)))
+        screen.blit(label, label.get_rect(center=center))
+        pygame.display.flip()
+        pygame.event.pump()
+
+    draw_loading_screen()
+    bg_surface, bg_clouds = build_background()
     menu_tint = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     menu_tint.fill((20, 12, 6, 28))
     for y in range(HEIGHT):
@@ -248,11 +274,104 @@ def main():
             ]
 
     slash_sound = None
+    mixer_ready = False
+    music_tracks = []
+    music_lengths = []
+    music_index = -1
+    current_track = None
+    music_transitioning = False
+    music_next_switch_at = 0
+    music_started_at = 0
+    MUSIC_FADE_MS = 2000
+    MUSIC_VOLUME = 0.55
+    TRACK_END_GUARD_S = 2.2
+
+    def discover_music_tracks():
+        tracks = []
+        for ext in ("*.mp3", "*.ogg", "*.wav"):
+            tracks.extend(sorted(glob.glob(os.path.join(music_dir, ext))))
+        return tracks
+
+    def start_music_track(track_idx, fade_ms=MUSIC_FADE_MS):
+        nonlocal music_index, current_track, music_transitioning
+        nonlocal music_next_switch_at, music_started_at
+        if not mixer_ready or not music_tracks:
+            return False
+        track_idx %= len(music_tracks)
+        track_path = music_tracks[track_idx]
+        try:
+            pygame.mixer.music.load(track_path)
+            pygame.mixer.music.set_volume(MUSIC_VOLUME)
+            pygame.mixer.music.play(loops=0, fade_ms=fade_ms)
+        except pygame.error:
+            return False
+        music_index = track_idx
+        current_track = track_path
+        music_started_at = pygame.time.get_ticks()
+        music_transitioning = False
+        music_next_switch_at = 0
+        return True
+
+    def schedule_music_transition():
+        nonlocal music_transitioning, music_next_switch_at
+        if not mixer_ready or not music_tracks or music_transitioning:
+            return
+        try:
+            pygame.mixer.music.fadeout(MUSIC_FADE_MS)
+        except pygame.error:
+            return
+        music_transitioning = True
+        music_next_switch_at = pygame.time.get_ticks() + MUSIC_FADE_MS
+
+    def update_music():
+        nonlocal music_transitioning
+        if not mixer_ready or not music_tracks:
+            return
+        now = pygame.time.get_ticks()
+        if music_transitioning:
+            if now >= music_next_switch_at:
+                start_music_track(music_index + 1, fade_ms=MUSIC_FADE_MS)
+            return
+
+        if not pygame.mixer.music.get_busy():
+            start_music_track(music_index + 1, fade_ms=MUSIC_FADE_MS)
+            return
+
+        track_len = 0.0
+        if 0 <= music_index < len(music_lengths):
+            track_len = music_lengths[music_index]
+        if track_len <= TRACK_END_GUARD_S:
+            return
+
+        pos_ms = pygame.mixer.music.get_pos()
+        if pos_ms >= 0:
+            elapsed = pos_ms / 1000.0
+        else:
+            elapsed = max(0.0, (now - music_started_at) / 1000.0)
+        remaining = track_len - elapsed
+        if remaining <= TRACK_END_GUARD_S:
+            schedule_music_transition()
+
     try:
         pygame.mixer.init()
-        slash_sound = generate_slash_sound()
+        mixer_ready = True
     except pygame.error:
-        slash_sound = None
+        mixer_ready = False
+
+    if mixer_ready:
+        try:
+            slash_sound = generate_slash_sound()
+        except pygame.error:
+            slash_sound = None
+
+        music_tracks = discover_music_tracks()
+        for track_path in music_tracks:
+            try:
+                music_lengths.append(pygame.mixer.Sound(track_path).get_length())
+            except pygame.error:
+                music_lengths.append(0.0)
+        if music_tracks:
+            start_music_track(0, fade_ms=MUSIC_FADE_MS)
 
     difficulty = "optimal"
     first_player = "player"
@@ -610,6 +729,7 @@ def main():
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
+        update_music()
         menu_fx_time += dt
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1155,5 +1275,7 @@ def main():
 
         pygame.display.flip()
 
+    if mixer_ready:
+        pygame.mixer.music.stop()
     pygame.quit()
 
