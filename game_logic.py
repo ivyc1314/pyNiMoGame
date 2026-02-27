@@ -104,12 +104,20 @@ def nim_ai_move(rows, difficulty):
     if not segments:
         return None
 
+    def edge_move(lo, hi, remove):
+        if random.random() < 0.5:
+            start = lo
+            end = lo + remove - 1
+        else:
+            start = hi - remove + 1
+            end = hi
+        return start, end
+
     def random_move():
         row_idx, lo, hi = random.choice(segments)
         length = hi - lo + 1
         remove = random.randint(1, length)
-        start = hi - remove + 1
-        end = hi
+        start, end = edge_move(lo, hi, remove)
         return row_idx, start, end
 
     use_optimal = difficulty == "optimal"
@@ -130,7 +138,6 @@ def nim_ai_move(rows, difficulty):
         target = length ^ nim_sum
         if target < length:
             remove = length - target
-            start = hi - remove + 1
-            end = hi
+            start, end = edge_move(lo, hi, remove)
             return row_idx, start, end
     return random_move()
