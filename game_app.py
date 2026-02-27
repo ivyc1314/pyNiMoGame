@@ -1,5 +1,7 @@
+import glob
 import os
 import random
+import math
 
 import pygame
 
@@ -38,6 +40,20 @@ PANEL_BG = (247, 250, 252, 235)
 PANEL_BORDER = (178, 192, 206)
 INFO_BG = (255, 255, 255, 210)
 OVERLAY_BG = (0, 0, 0, 120)
+MENU_PANEL_BG = (217, 191, 144, 55)
+MENU_PANEL_EDGE_DARK = (86, 58, 33)
+MENU_PANEL_EDGE_GOLD = (191, 149, 72)
+MENU_TITLE_GLOW = (224, 178, 88)
+MENU_TITLE_TEXT = (250, 233, 195)
+MENU_LABEL_COLOR = (246, 232, 202)
+MENU_LABEL_SHADOW = (22, 12, 8)
+MENU_BUTTON_PALETTE = {
+    "base": (108, 73, 42),
+    "highlight": (136, 94, 56),
+    "text": (248, 226, 186),
+    "border": (194, 155, 80),
+    "shadow": (0, 0, 0, 80),
+}
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -73,6 +89,44 @@ def main():
     button_font = pick_font(26)
 
     bg_surface, bg_clouds = build_background()
+    menu_bg = None
+    menu_states = {"main_menu", "single_menu", "quick_menu", "custom_menu", "rules"}
+    picture_dir = os.path.join(os.path.dirname(__file__), "picture")
+    menu_bg_candidates = []
+    for ext in ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp"):
+        menu_bg_candidates.extend(sorted(glob.glob(os.path.join(picture_dir, ext))))
+    menu_bg_candidates.sort(
+        key=lambda p: (
+            0
+            if ("棋桌" in os.path.basename(p) and "棋子" in os.path.basename(p))
+            else 1,
+            -os.path.getsize(p),
+            p,
+        )
+    )
+    if menu_bg_candidates:
+        try:
+            menu_bg = pygame.image.load(menu_bg_candidates[0]).convert()
+            menu_bg = pygame.transform.smoothscale(menu_bg, (WIDTH, HEIGHT))
+        except pygame.error:
+            menu_bg = None
+    menu_tint = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    menu_tint.fill((20, 12, 6, 28))
+    for y in range(HEIGHT):
+        alpha = int(4 + 10 * (y / max(HEIGHT - 1, 1)))
+        pygame.draw.line(menu_tint, (48, 24, 10, alpha), (0, y), (WIDTH, y))
+    pygame.draw.ellipse(menu_tint, (255, 215, 132, 28), (-120, -120, 430, 280))
+    pygame.draw.ellipse(menu_tint, (255, 210, 120, 20), (WIDTH - 360, -80, 420, 260))
+    menu_sparks = [
+        (
+            random.randint(40, WIDTH - 40),
+            random.randint(30, HEIGHT - 30),
+            random.uniform(0.0, math.tau),
+            random.uniform(0.7, 1.5),
+        )
+        for _ in range(22)
+    ]
+    menu_fx_time = 0.0
 
     slash_sound = None
     try:
@@ -294,14 +348,68 @@ def main():
     def draw_panel(title):
         panel_surface = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
         pygame.draw.rect(
-            panel_surface, PANEL_BG, panel_surface.get_rect(), border_radius=20
+            panel_surface, MENU_PANEL_BG, panel_surface.get_rect(), border_radius=22
         )
         pygame.draw.rect(
-            panel_surface, PANEL_BORDER, panel_surface.get_rect(), 2, border_radius=20
+            panel_surface,
+            MENU_PANEL_EDGE_DARK,
+            panel_surface.get_rect(),
+            3,
+            border_radius=22,
         )
+        pygame.draw.rect(
+            panel_surface,
+            MENU_PANEL_EDGE_GOLD,
+            panel_surface.get_rect().inflate(-10, -10),
+            2,
+            border_radius=18,
+        )
+        for ox, oy in ((16, 16), (16, panel_rect.height - 16), (panel_rect.width - 16, 16), (panel_rect.width - 16, panel_rect.height - 16)):
+            pygame.draw.circle(panel_surface, MENU_PANEL_EDGE_GOLD, (ox, oy), 4)
+        for x in (70, panel_rect.width - 70):
+            pygame.draw.line(
+                panel_surface,
+                MENU_PANEL_EDGE_GOLD,
+                (x, 24),
+                (panel_rect.width - x, 24),
+                2,
+            )
+            pygame.draw.line(
+                panel_surface,
+                MENU_PANEL_EDGE_GOLD,
+                (x, panel_rect.height - 24),
+                (panel_rect.width - x, panel_rect.height - 24),
+                2,
+            )
         screen.blit(panel_surface, panel_rect.topleft)
-        title_label = big_font.render(title, True, TITLE_COLOR)
+        title_shadow = big_font.render(title, True, (56, 32, 18))
+        screen.blit(
+            title_shadow,
+            title_shadow.get_rect(center=(WIDTH // 2 + 2, title_y + 2)),
+        )
+        glow = big_font.render(title, True, MENU_TITLE_GLOW)
+        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            screen.blit(glow, glow.get_rect(center=(WIDTH // 2 + dx, title_y + dy)))
+        title_label = big_font.render(title, True, MENU_TITLE_TEXT)
         screen.blit(title_label, title_label.get_rect(center=(WIDTH // 2, title_y)))
+
+    def draw_menu_magic():
+        screen.blit(menu_tint, (0, 0))
+        for x, y, phase, speed in menu_sparks:
+            t = menu_fx_time * speed + phase
+            alpha = int(52 + 58 * (0.5 + 0.5 * math.sin(t)))
+            radius = 1 + int(2 * (0.5 + 0.5 * math.sin(t * 1.7)))
+            fx = pygame.Surface((radius * 8, radius * 8), pygame.SRCALPHA)
+            c = radius * 4
+            pygame.draw.circle(fx, (255, 220, 150, alpha), (c, c), radius + 1)
+            pygame.draw.circle(fx, (255, 248, 214, min(210, alpha + 80)), (c, c), radius)
+            screen.blit(fx, (x - c, y - c))
+
+    def draw_menu_text(text, text_font, pos):
+        shadow = text_font.render(text, True, MENU_LABEL_SHADOW)
+        screen.blit(shadow, (pos[0] + 1, pos[1] + 2))
+        label = text_font.render(text, True, MENU_LABEL_COLOR)
+        screen.blit(label, pos)
 
     def start_slash(row_idx, start_idx, end_idx, actor):
         nonlocal slash_effect, pending_remove
@@ -341,6 +449,7 @@ def main():
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
+        menu_fx_time += dt
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -495,8 +604,16 @@ def main():
                         row_idx, start_idx, end_idx = move
                         start_slash(row_idx, start_idx, end_idx, "ai")
 
-        screen.blit(bg_surface, (0, 0))
-        screen.blit(bg_clouds, (0, 0))
+        if game_state in menu_states:
+            if menu_bg is not None:
+                screen.blit(menu_bg, (0, 0))
+            else:
+                screen.blit(bg_surface, (0, 0))
+                screen.blit(bg_clouds, (0, 0))
+            draw_menu_magic()
+        else:
+            screen.blit(bg_surface, (0, 0))
+            screen.blit(bg_clouds, (0, 0))
 
         if game_state in ("playing", "gameover"):
             centers = get_row_centers(rows)
@@ -618,21 +735,25 @@ def main():
         if game_state == "main_menu":
             draw_panel("尼莫游戏")
             for btn in main_buttons:
-                btn.draw(screen, button_font)
+                btn.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
 
         if game_state == "single_menu":
             draw_panel("单人游戏")
             for btn in single_buttons:
-                btn.draw(screen, button_font)
-            back_button.draw(screen, button_font)
+                btn.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
 
         if game_state == "quick_menu":
             draw_panel("快速游戏")
-            label1 = label_font.render("AI难度", True, SUBTEXT_COLOR)
-            screen.blit(label1, (left_x, label_y))
+            draw_menu_text("AI难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
                 selected = difficulty == ["optimal", "medium", "random"][idx]
-                btn.draw(screen, button_font, selected=selected)
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                )
             quick_lines = [
                 "三局两胜",
                 "第1局先手随机",
@@ -642,34 +763,55 @@ def main():
             ]
             quick_y = label_y
             for line in quick_lines:
-                quick_label = small_font.render(line, True, SUBTEXT_COLOR)
-                screen.blit(quick_label, (right_x, quick_y))
+                draw_menu_text(line, small_font, (right_x, quick_y))
                 quick_y += 26
-            start_button.draw(screen, button_font, selected=False)
-            back_button.draw(screen, button_font)
+            start_button.draw(
+                screen,
+                button_font,
+                selected=False,
+                palette=MENU_BUTTON_PALETTE,
+            )
+            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
 
         if game_state == "custom_menu":
             draw_panel("自定义对局")
-            label1 = label_font.render("选择难度", True, SUBTEXT_COLOR)
-            screen.blit(label1, (left_x, label_y))
+            draw_menu_text("选择难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
                 selected = difficulty == ["optimal", "medium", "random"][idx]
-                btn.draw(screen, button_font, selected=selected)
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                )
 
-            label2 = label_font.render("先手", True, SUBTEXT_COLOR)
-            screen.blit(label2, (right_x, label_y))
+            draw_menu_text("先手", label_font, (right_x, label_y))
             for idx, btn in enumerate(first_buttons):
                 selected = first_player == ["player", "ai"][idx]
-                btn.draw(screen, button_font, selected=selected)
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                )
 
-            label3 = label_font.render("对局模式", True, SUBTEXT_COLOR)
-            screen.blit(label3, (right_x, match_label_y))
+            draw_menu_text("对局模式", label_font, (right_x, match_label_y))
             for idx, btn in enumerate(match_buttons):
                 selected = match_mode == ["single", "best3"][idx]
-                btn.draw(screen, button_font, selected=selected)
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                )
 
-            start_button.draw(screen, button_font, selected=False)
-            back_button.draw(screen, button_font)
+            start_button.draw(
+                screen,
+                button_font,
+                selected=False,
+                palette=MENU_BUTTON_PALETTE,
+            )
+            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
 
         if game_state == "rules":
             draw_panel("规则")
@@ -684,10 +826,9 @@ def main():
             ]
             rule_y = panel_rect.y + 140
             for line in rules_lines:
-                rule_label = small_font.render(line, True, SUBTEXT_COLOR)
-                screen.blit(rule_label, (panel_rect.x + 40, rule_y))
+                draw_menu_text(line, small_font, (panel_rect.x + 40, rule_y))
                 rule_y += 28
-            back_button.draw(screen, button_font)
+            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
 
         if game_state == "round_intro":
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)

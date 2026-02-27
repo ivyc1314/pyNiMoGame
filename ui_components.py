@@ -42,13 +42,26 @@ class Button:
         self.rect = pygame.Rect(rect)
         self.text = text
 
-    def draw(self, surface, font, selected=False):
-        color = BTN_HL if selected else BTN_COLOR
+    def draw(self, surface, font, selected=False, palette=None):
+        if palette:
+            base = palette["base"]
+            highlight = palette["highlight"]
+            text_color = palette["text"]
+            border = palette["border"]
+            shadow = palette["shadow"]
+        else:
+            base = BTN_COLOR
+            highlight = BTN_HL
+            text_color = BTN_TEXT
+            border = BTN_BORDER
+            shadow = BTN_SHADOW
+
+        color = highlight if selected else base
         shadow_rect = self.rect.move(2, 3)
-        pygame.draw.rect(surface, BTN_SHADOW, shadow_rect, border_radius=10)
+        pygame.draw.rect(surface, shadow, shadow_rect, border_radius=10)
         pygame.draw.rect(surface, color, self.rect, border_radius=10)
-        pygame.draw.rect(surface, BTN_BORDER, self.rect, 2, border_radius=10)
-        label = font.render(self.text, True, BTN_TEXT)
+        pygame.draw.rect(surface, border, self.rect, 2, border_radius=10)
+        label = font.render(self.text, True, text_color)
         surface.blit(label, label.get_rect(center=self.rect.center))
 
     def hit(self, pos):
