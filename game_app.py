@@ -32,10 +32,10 @@ BROKEN_EDGE = (120, 128, 140)
 TEXT_COLOR = (30, 40, 50)
 TITLE_COLOR = (24, 44, 66)
 SUBTEXT_COLOR = (60, 70, 85)
-CANCEL_BG = (240, 118, 96)
-CANCEL_HL = (255, 150, 130)
-CANCEL_TEXT = (255, 255, 255)
-CANCEL_BORDER = (182, 78, 64)
+CANCEL_BG = (122, 88, 54)
+CANCEL_HL = (150, 109, 69)
+CANCEL_TEXT = (246, 229, 192)
+CANCEL_BORDER = (196, 154, 82)
 PANEL_BG = (247, 250, 252, 235)
 PANEL_BORDER = (178, 192, 206)
 INFO_BG = (255, 255, 255, 210)
@@ -54,6 +54,22 @@ MENU_BUTTON_PALETTE = {
     "border": (194, 155, 80),
     "shadow": (0, 0, 0, 80),
 }
+BATTLE_PANEL_BG = (117, 86, 52, 214)
+BATTLE_PANEL_BORDER_DARK = (66, 45, 27)
+BATTLE_PANEL_BORDER_GOLD = (190, 151, 78)
+BATTLE_TEXT_MAIN = (245, 232, 198)
+BATTLE_TEXT_SHADOW = (24, 15, 9)
+BATTLE_SUBTEXT_MAIN = (228, 205, 162)
+BATTLE_SUBTEXT_SHADOW = (20, 12, 7)
+BATTLE_OVERLAY_BG = (13, 9, 6, 170)
+BATTLE_BUTTON_PALETTE = {
+    "base": (96, 67, 40),
+    "highlight": (126, 90, 56),
+    "text": (248, 228, 190),
+    "border": (196, 156, 84),
+    "shadow": (0, 0, 0, 92),
+}
+ROLE_LABELS = {"player": "玩家", "ai": "AI赌徒"}
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -127,6 +143,92 @@ def main():
         for _ in range(22)
     ]
     menu_fx_time = 0.0
+    battle_bg = None
+    battle_piece_icons = []
+    broken_piece_icons = []
+
+    def cutout_checkerboard(src_surface):
+        w, h = src_surface.get_size()
+        out = pygame.Surface((w, h), pygame.SRCALPHA)
+        for y in range(h):
+            for x in range(w):
+                r, g, b, _ = src_surface.get_at((x, y))
+                diff = max(abs(r - g), abs(g - b), abs(r - b))
+                lum = (r + g + b) // 3
+                if diff <= 10 and 40 <= lum <= 220:
+                    continue
+                if diff <= 16 and 40 <= lum <= 220:
+                    alpha = int(255 * (diff - 10) / 6)
+                    alpha = max(0, min(255, alpha))
+                else:
+                    alpha = 255
+                out.set_at((x, y), (r, g, b, alpha))
+        return out
+
+    def extract_icons_from_sheet(path, target_h=48, split_components=True):
+        icons = []
+        try:
+            sheet = pygame.image.load(path).convert_alpha()
+        except pygame.error:
+            return icons
+
+        cutout = cutout_checkerboard(sheet)
+        if split_components:
+            mask = pygame.mask.from_surface(cutout, 10)
+            rects = [r for r in mask.get_bounding_rects() if r.w > 40 and r.h > 40]
+            rects.sort(key=lambda r: (r.y, r.x))
+        else:
+            whole = cutout.get_bounding_rect(min_alpha=8)
+            rects = [whole] if whole.w > 0 and whole.h > 0 else []
+
+        for rect in rects:
+            icon = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+            icon.blit(cutout, (0, 0), rect)
+            trim = icon.get_bounding_rect(min_alpha=8)
+            if trim.w <= 0 or trim.h <= 0:
+                continue
+            icon = icon.subsurface(trim).copy()
+            target_w = max(38, int(icon.get_width() * (target_h / icon.get_height())))
+            icon = pygame.transform.smoothscale(icon, (target_w, target_h))
+            icons.append(icon)
+        return icons
+
+    png_images = sorted(glob.glob(os.path.join(picture_dir, "*.png")))
+    jpg_images = sorted(glob.glob(os.path.join(picture_dir, "*.jpg")))
+    jpg_images += sorted(glob.glob(os.path.join(picture_dir, "*.jpeg")))
+
+    table_path = min(png_images, key=os.path.getsize) if png_images else None
+    if table_path:
+        try:
+            battle_bg = pygame.image.load(table_path).convert()
+            battle_bg = pygame.transform.smoothscale(battle_bg, (WIDTH, HEIGHT))
+        except pygame.error:
+            battle_bg = None
+
+    piece_sheet_path = max(jpg_images, key=os.path.getsize) if jpg_images else None
+    if not piece_sheet_path and png_images:
+        piece_sheet_path = max(png_images, key=os.path.getsize)
+    if piece_sheet_path:
+        battle_piece_icons = extract_icons_from_sheet(
+            piece_sheet_path, target_h=58, split_components=True
+        )
+
+    broken_sheet_path = None
+    if len(png_images) >= 2:
+        non_table_pngs = [p for p in png_images if p != table_path]
+        if non_table_pngs:
+            broken_sheet_path = max(non_table_pngs, key=os.path.getsize)
+    if broken_sheet_path:
+        broken_piece_icons = extract_icons_from_sheet(
+            broken_sheet_path, target_h=62, split_components=False
+        )
+        if broken_piece_icons:
+            base = broken_piece_icons[0]
+            broken_piece_icons = [
+                pygame.transform.rotozoom(base, -8, 0.97),
+                base,
+                pygame.transform.rotozoom(base, 7, 1.02),
+            ]
 
     slash_sound = None
     try:
@@ -182,7 +284,7 @@ def main():
     main_btn_gap = 22
     start_btn_y = panel_rect.bottom - 70
     cancel_rect = pygame.Rect(WIDTH - 170, 30, 140, 36)
-    exit_button = Button((30, 18, 96, 36), "退出")
+    exit_button = Button((30, 18, 108, 40), "离席")
 
     main_buttons = [
         Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "单人游戏"),
@@ -200,7 +302,7 @@ def main():
     ]
     difficulty_buttons = [
         Button((left_x, buttons_y + i * (btn_h + btn_gap), btn_w, btn_h), label)
-        for i, label in enumerate(["最优", "中等", "随机"])
+        for i, label in enumerate(["新手", "职业", "大师"])
     ]
     first_buttons = [
         Button((right_x, buttons_y + i * (btn_h + btn_gap), btn_w, btn_h), label)
@@ -225,16 +327,16 @@ def main():
         (panel_rect.centerx - 120, start_btn_y, 240, 56), "开始游戏"
     )
     back_button = Button((panel_rect.x + 24, panel_rect.bottom - 64, 160, 44), "返回")
-    next_button = Button((WIDTH // 2 - 100, HEIGHT // 2 + 40, 200, 55), "下一局")
-    restart_button = Button((WIDTH // 2 - 100, HEIGHT // 2 + 40, 200, 55), "再来一局")
-    menu_button = Button((WIDTH // 2 - 100, HEIGHT // 2 + 110, 200, 55), "返回主菜单")
+    next_button = Button((WIDTH // 2 - 110, HEIGHT // 2 + 40, 220, 55), "下一盘")
+    restart_button = Button((WIDTH // 2 - 110, HEIGHT // 2 + 40, 220, 55), "再开一盘")
+    menu_button = Button((WIDTH // 2 - 110, HEIGHT // 2 + 110, 220, 55), "返回赌桌厅")
 
     def difficulty_text():
-        if difficulty == "optimal":
-            return "最优"
+        if difficulty == "random":
+            return "新手"
         if difficulty == "medium":
-            return "中等"
-        return "随机"
+            return "职业"
+        return "大师"
 
     def generate_rows():
         while True:
@@ -411,6 +513,26 @@ def main():
         label = text_font.render(text, True, MENU_LABEL_COLOR)
         screen.blit(label, pos)
 
+    def draw_battle_text(
+        text,
+        text_font,
+        pos,
+        color=BATTLE_TEXT_MAIN,
+        shadow=BATTLE_TEXT_SHADOW,
+        center=False,
+    ):
+        shadow_label = text_font.render(text, True, shadow)
+        label = text_font.render(text, True, color)
+        if center:
+            screen.blit(
+                shadow_label, shadow_label.get_rect(center=(pos[0] + 1, pos[1] + 2))
+            )
+            screen.blit(label, label.get_rect(center=pos))
+        else:
+            screen.blit(shadow_label, (pos[0] + 1, pos[1] + 2))
+            screen.blit(label, pos)
+        return label
+
     def start_slash(row_idx, start_idx, end_idx, actor):
         nonlocal slash_effect, pending_remove
         centers = get_row_centers(rows)
@@ -470,7 +592,7 @@ def main():
                 elif game_state == "quick_menu":
                     for idx, btn in enumerate(difficulty_buttons):
                         if btn.hit(event.pos):
-                            difficulty = ["optimal", "medium", "random"][idx]
+                            difficulty = ["random", "medium", "optimal"][idx]
                     if start_button.hit(event.pos):
                         start_match("best3", quick=True)
                     elif back_button.hit(event.pos):
@@ -478,7 +600,7 @@ def main():
                 elif game_state == "custom_menu":
                     for idx, btn in enumerate(difficulty_buttons):
                         if btn.hit(event.pos):
-                            difficulty = ["optimal", "medium", "random"][idx]
+                            difficulty = ["random", "medium", "optimal"][idx]
                     for idx, btn in enumerate(first_buttons):
                         if btn.hit(event.pos):
                             first_player = ["player", "ai"][idx]
@@ -611,6 +733,8 @@ def main():
                 screen.blit(bg_surface, (0, 0))
                 screen.blit(bg_clouds, (0, 0))
             draw_menu_magic()
+        elif game_state in ("playing", "gameover", "round_intro") and battle_bg is not None:
+            screen.blit(battle_bg, (0, 0))
         else:
             screen.blit(bg_surface, (0, 0))
             screen.blit(bg_clouds, (0, 0))
@@ -619,105 +743,174 @@ def main():
             centers = get_row_centers(rows)
             for row_idx, row in enumerate(centers):
                 for idx, (x, y) in enumerate(row):
+                    selected = False
+                    if (
+                        selecting
+                        and row_idx == select_row
+                        and select_start is not None
+                        and select_end is not None
+                    ):
+                        lo = min(select_start, select_end)
+                        hi = max(select_start, select_end)
+                        selected = lo <= idx <= hi
+
                     if rows[row_idx][idx]:
-                        color = CIRCLE_COLOR
-                        if selecting and row_idx == select_row:
-                            lo = min(select_start, select_end)
-                            hi = max(select_start, select_end)
-                            if lo <= idx <= hi:
-                                color = CIRCLE_HL
-                        pygame.draw.circle(screen, color, (int(x), int(y)), RADIUS)
+                        if battle_piece_icons:
+                            icon = battle_piece_icons[
+                                (row_idx * len(row) + idx) % len(battle_piece_icons)
+                            ]
+                            if selected:
+                                glow_r = max(RADIUS + 7, icon.get_width() // 2 + 6)
+                                pygame.draw.circle(
+                                    screen, CIRCLE_HL, (int(x), int(y)), glow_r
+                                )
+                            icon_rect = icon.get_rect(center=(int(x), int(y)))
+                            screen.blit(icon, icon_rect)
+                        else:
+                            color = CIRCLE_HL if selected else CIRCLE_COLOR
+                            pygame.draw.circle(screen, color, (int(x), int(y)), RADIUS)
                     else:
-                        pygame.draw.circle(
-                            screen, BROKEN_COLOR, (int(x), int(y)), RADIUS
-                        )
-                        pygame.draw.circle(
-                            screen, BROKEN_EDGE, (int(x), int(y)), RADIUS, 2
-                        )
-                        pygame.draw.line(
-                            screen,
-                            BROKEN_EDGE,
-                            (int(x - RADIUS * 0.5), int(y - 2)),
-                            (int(x + RADIUS * 0.4), int(y + 6)),
-                            2,
-                        )
-                        pygame.draw.line(
-                            screen,
-                            BROKEN_EDGE,
-                            (int(x - RADIUS * 0.1), int(y + 8)),
-                            (int(x + RADIUS * 0.5), int(y - 6)),
-                            2,
-                        )
+                        if broken_piece_icons:
+                            icon = broken_piece_icons[
+                                (row_idx * len(row) + idx) % len(broken_piece_icons)
+                            ]
+                            icon_rect = icon.get_rect(center=(int(x), int(y)))
+                            screen.blit(icon, icon_rect)
+                        else:
+                            pygame.draw.circle(
+                                screen, BROKEN_COLOR, (int(x), int(y)), RADIUS
+                            )
+                            pygame.draw.circle(
+                                screen, BROKEN_EDGE, (int(x), int(y)), RADIUS, 2
+                            )
+                            pygame.draw.line(
+                                screen,
+                                BROKEN_EDGE,
+                                (int(x - RADIUS * 0.5), int(y - 2)),
+                                (int(x + RADIUS * 0.4), int(y + 6)),
+                                2,
+                            )
+                            pygame.draw.line(
+                                screen,
+                                BROKEN_EDGE,
+                                (int(x - RADIUS * 0.1), int(y + 8)),
+                                (int(x + RADIUS * 0.5), int(y - 6)),
+                                2,
+                            )
 
             if game_state == "playing":
-                exit_button.draw(screen, button_font, selected=False)
+                exit_button.draw(
+                    screen,
+                    button_font,
+                    selected=False,
+                    palette=BATTLE_BUTTON_PALETTE,
+                )
 
-            info_rect = pygame.Rect(140, 18, WIDTH - 420, 190)
+            info_rect = pygame.Rect(130, 18, WIDTH - 360, 198)
+            info_shadow = info_rect.move(3, 4)
+            pygame.draw.rect(screen, (0, 0, 0, 92), info_shadow, border_radius=18)
             info_surface = pygame.Surface(info_rect.size, pygame.SRCALPHA)
             pygame.draw.rect(
-                info_surface, INFO_BG, info_surface.get_rect(), border_radius=16
+                info_surface, BATTLE_PANEL_BG, info_surface.get_rect(), border_radius=16
             )
             pygame.draw.rect(
                 info_surface,
-                PANEL_BORDER,
+                BATTLE_PANEL_BORDER_DARK,
                 info_surface.get_rect(),
-                2,
+                3,
                 border_radius=16,
+            )
+            pygame.draw.rect(
+                info_surface,
+                BATTLE_PANEL_BORDER_GOLD,
+                info_surface.get_rect().inflate(-10, -10),
+                2,
+                border_radius=12,
             )
             screen.blit(info_surface, info_rect.topleft)
 
             pad = 12
             gap = 6
+            right_anchor = info_rect.right - 20
             y = info_rect.y + pad
-            turn_text = f"当前回合：{'玩家' if current_player == 'player' else 'AI'}"
-            info = font.render(turn_text, True, TEXT_COLOR)
-            screen.blit(info, (info_rect.x + 20, y))
+            turn_text = f"当前回合：{ROLE_LABELS[current_player]}"
+            info = draw_battle_text(turn_text, font, (info_rect.x + 20, y))
+            round_text = (
+                f"第{game_number}局"
+                if quick_mode or match_mode == "best3"
+                else "单盘"
+            )
+            round_w, _ = small_font.size(round_text)
+            round_y = info_rect.bottom - pad - small_font.get_height()
+            draw_battle_text(
+                round_text,
+                small_font,
+                (right_anchor - round_w, round_y),
+                color=BATTLE_SUBTEXT_MAIN,
+                shadow=BATTLE_SUBTEXT_SHADOW,
+            )
             y += font.get_height() + gap
 
             diff_text = f"难度：{difficulty_text()}"
-            info2 = font.render(diff_text, True, TEXT_COLOR)
-            screen.blit(info2, (info_rect.x + 20, y))
+            draw_battle_text(diff_text, font, (info_rect.x + 20, y))
             if quick_mode:
-                removed_line = (
-                    f"前两局已删除：玩家{match_removed['player']} - AI{match_removed['ai']}"
+                removed_line = f"碎子数：玩家{match_removed['player']} - AI赌徒{match_removed['ai']}"
+                removed_w, removed_h = small_font.size(removed_line)
+                removed_x = right_anchor - removed_w
+                removed_y = y + (font.get_height() - removed_h) // 2
+                draw_battle_text(
+                    removed_line,
+                    small_font,
+                    (removed_x, removed_y),
+                    color=BATTLE_SUBTEXT_MAIN,
+                    shadow=BATTLE_SUBTEXT_SHADOW,
                 )
-                removed_label = small_font.render(removed_line, True, SUBTEXT_COLOR)
-                removed_x = info_rect.x + 20 + info2.get_width() + 16
-                removed_y = y + (font.get_height() - removed_label.get_height()) // 2
-                if removed_x + removed_label.get_width() > info_rect.right - 20:
-                    y += font.get_height() + gap
-                    removed_x = info_rect.x + 20
-                    removed_y = y
-                screen.blit(removed_label, (removed_x, removed_y))
             y += font.get_height() + gap
 
             if quick_mode:
-                mode_line = f"快速赛 第{game_number}局/3"
-                score_line = f"比分：玩家{match_wins['player']} - AI{match_wins['ai']}"
+                mode_line = "三局两胜"
+                score_line = f"赌分：玩家{match_wins['player']} - AI赌徒{match_wins['ai']}"
             elif match_mode == "best3":
-                mode_line = f"三局两胜 第{game_number}局/3"
-                score_line = f"比分：玩家{match_wins['player']} - AI{match_wins['ai']}"
+                mode_line = "三局两胜"
+                score_line = f"赌分：玩家{match_wins['player']} - AI赌徒{match_wins['ai']}"
             else:
-                mode_line = "模式：单局"
+                mode_line = "赌局：单盘"
                 score_line = ""
 
-            mode_label = small_font.render(mode_line, True, SUBTEXT_COLOR)
-            screen.blit(mode_label, (info_rect.x + 20, y))
+            draw_battle_text(
+                mode_line,
+                small_font,
+                (info_rect.x + 20, y),
+                color=BATTLE_SUBTEXT_MAIN,
+                shadow=BATTLE_SUBTEXT_SHADOW,
+            )
             y += small_font.get_height() + gap
 
             if score_line:
-                score_label = small_font.render(score_line, True, SUBTEXT_COLOR)
-                screen.blit(score_label, (info_rect.x + 20, y))
+                draw_battle_text(
+                    score_line,
+                    small_font,
+                    (info_rect.x + 20, y),
+                    color=BATTLE_SUBTEXT_MAIN,
+                    shadow=BATTLE_SUBTEXT_SHADOW,
+                )
                 y += small_font.get_height() + gap
 
             if game_state == "playing":
-                hint = small_font.render("拖拽同一行连续划过即可取子", True, SUBTEXT_COLOR)
-                hint_x = info_rect.right - 20 - hint.get_width()
-                hint_y = info_rect.y + pad + (font.get_height() - hint.get_height()) // 2
+                hint_text = "沿同一排连划木筹，可一次收走"
+                hint_w, hint_h = small_font.size(hint_text)
+                hint_x = right_anchor - hint_w
+                hint_y = info_rect.y + pad + (font.get_height() - hint_h) // 2
                 if hint_x < info_rect.x + 20 + info.get_width() + 12:
                     hint_y = info_rect.y + pad + font.get_height() + gap
-                    hint_x = info_rect.right - 20 - hint.get_width()
-                screen.blit(hint, (hint_x, hint_y))
+                    hint_x = right_anchor - hint_w
+                draw_battle_text(
+                    hint_text,
+                    small_font,
+                    (hint_x, hint_y),
+                    color=BATTLE_SUBTEXT_MAIN,
+                    shadow=BATTLE_SUBTEXT_SHADOW,
+                )
 
             if slash_effect:
                 slash_effect.draw(screen)
@@ -727,9 +920,13 @@ def main():
                 cancel_color = CANCEL_HL if cancel_hover else CANCEL_BG
                 pygame.draw.rect(screen, cancel_color, cancel_rect, border_radius=10)
                 pygame.draw.rect(screen, CANCEL_BORDER, cancel_rect, 2, border_radius=10)
-                cancel_label = small_font.render("取消", True, CANCEL_TEXT)
-                screen.blit(
-                    cancel_label, cancel_label.get_rect(center=cancel_rect.center)
+                draw_battle_text(
+                    "收手",
+                    small_font,
+                    cancel_rect.center,
+                    color=CANCEL_TEXT,
+                    shadow=BATTLE_TEXT_SHADOW,
+                    center=True,
                 )
 
         if game_state == "main_menu":
@@ -747,7 +944,7 @@ def main():
             draw_panel("快速游戏")
             draw_menu_text("AI难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
-                selected = difficulty == ["optimal", "medium", "random"][idx]
+                selected = difficulty == ["random", "medium", "optimal"][idx]
                 btn.draw(
                     screen,
                     button_font,
@@ -777,7 +974,7 @@ def main():
             draw_panel("自定义对局")
             draw_menu_text("选择难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
-                selected = difficulty == ["optimal", "medium", "random"][idx]
+                selected = difficulty == ["random", "medium", "optimal"][idx]
                 btn.draw(
                     screen,
                     button_font,
@@ -832,55 +1029,80 @@ def main():
 
         if game_state == "round_intro":
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill(OVERLAY_BG)
+            overlay.fill(BATTLE_OVERLAY_BG)
             screen.blit(overlay, (0, 0))
-            mode_name = "快速赛" if quick_mode else "三局两胜"
-            title = big_font.render(f"{mode_name} 第{game_number}局", True, (255, 255, 255))
-            screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30)))
-            score_text = f"当前比分 玩家{match_wins['player']} - AI{match_wins['ai']}"
-            score_label = small_font.render(score_text, True, (255, 255, 255))
-            screen.blit(
-                score_label, score_label.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10))
+            mode_name = "三局两胜" if (quick_mode or match_mode == "best3") else "单盘"
+            draw_battle_text(
+                f"{mode_name} · 第{game_number}局",
+                big_font,
+                (WIDTH // 2, HEIGHT // 2 - 30),
+                color=BATTLE_TEXT_MAIN,
+                shadow=BATTLE_TEXT_SHADOW,
+                center=True,
             )
-            first_text = f"先手：{'玩家' if current_player == 'player' else 'AI'}"
-            first_label = small_font.render(first_text, True, (255, 255, 255))
-            screen.blit(
-                first_label, first_label.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 38))
+            draw_battle_text(
+                f"当前赌分 玩家{match_wins['player']} - AI赌徒{match_wins['ai']}",
+                small_font,
+                (WIDTH // 2, HEIGHT // 2 + 10),
+                color=BATTLE_SUBTEXT_MAIN,
+                shadow=BATTLE_SUBTEXT_SHADOW,
+                center=True,
+            )
+            draw_battle_text(
+                f"先执：{ROLE_LABELS[current_player]}",
+                small_font,
+                (WIDTH // 2, HEIGHT // 2 + 38),
+                color=BATTLE_SUBTEXT_MAIN,
+                shadow=BATTLE_SUBTEXT_SHADOW,
+                center=True,
             )
 
         if game_state == "gameover":
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill(OVERLAY_BG)
+            overlay.fill(BATTLE_OVERLAY_BG)
             screen.blit(overlay, (0, 0))
             if match_complete() and (match_mode == "best3" or quick_mode):
                 overall_winner = (
-                    "玩家" if match_wins["player"] > match_wins["ai"] else "AI"
+                    ROLE_LABELS["player"]
+                    if match_wins["player"] > match_wins["ai"]
+                    else ROLE_LABELS["ai"]
                 )
-                msg = f"比赛结束：{overall_winner}获胜！"
-                label = big_font.render(msg, True, (255, 255, 255))
-                screen.blit(
-                    label, label.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 30))
+                draw_battle_text(
+                    f"赌局已定：{overall_winner}胜出！",
+                    big_font,
+                    (WIDTH // 2, HEIGHT // 2 - 30),
+                    color=BATTLE_TEXT_MAIN,
+                    shadow=BATTLE_TEXT_SHADOW,
+                    center=True,
                 )
-                score_text = f"比分 玩家{match_wins['player']} - AI{match_wins['ai']}"
-                score_label = small_font.render(score_text, True, (255, 255, 255))
-                screen.blit(
-                    score_label, score_label.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 8))
+                draw_battle_text(
+                    f"赌分 玩家{match_wins['player']} - AI赌徒{match_wins['ai']}",
+                    small_font,
+                    (WIDTH // 2, HEIGHT // 2 + 8),
+                    color=BATTLE_SUBTEXT_MAIN,
+                    shadow=BATTLE_SUBTEXT_SHADOW,
+                    center=True,
                 )
-                restart_button.text = "再来一组"
-                restart_button.draw(screen, button_font)
+                restart_button.text = "再开一组赌局"
+                restart_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
             else:
-                msg = f"{'玩家' if winner == 'player' else 'AI'} 获胜！"
-                label = big_font.render(msg, True, (255, 255, 255))
-                screen.blit(
-                    label, label.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20))
+                draw_battle_text(
+                    f"本盘胜者：{ROLE_LABELS[winner]}",
+                    big_font,
+                    (WIDTH // 2, HEIGHT // 2 - 20),
+                    color=BATTLE_TEXT_MAIN,
+                    shadow=BATTLE_TEXT_SHADOW,
+                    center=True,
                 )
                 if match_mode == "best3" or quick_mode:
-                    next_button.draw(screen, button_font)
+                    next_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
                 else:
-                    restart_button.text = "再来一局"
-                    restart_button.draw(screen, button_font)
+                    restart_button.text = "再开一盘"
+                    restart_button.draw(
+                        screen, button_font, palette=BATTLE_BUTTON_PALETTE
+                    )
             if match_complete():
-                menu_button.draw(screen, button_font)
+                menu_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
 
         pygame.display.flip()
 
