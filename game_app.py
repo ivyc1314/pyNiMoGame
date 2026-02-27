@@ -806,7 +806,7 @@ def main():
                     palette=BATTLE_BUTTON_PALETTE,
                 )
 
-            info_rect = pygame.Rect(130, 18, WIDTH - 360, 198)
+            info_rect = pygame.Rect(160, 18, WIDTH - 390, 198)
             info_shadow = info_rect.move(3, 4)
             pygame.draw.rect(screen, (0, 0, 0, 92), info_shadow, border_radius=18)
             info_surface = pygame.Surface(info_rect.size, pygame.SRCALPHA)
