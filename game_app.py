@@ -26,7 +26,10 @@ from ui_components import (
 FPS = 60
 
 CIRCLE_COLOR = (60, 90, 120)
-CIRCLE_HL = (240, 100, 80)
+CIRCLE_HL = (186, 152, 96)
+SELECT_GLOW_COLOR = (255, 214, 140)
+SELECT_GLOW_ALPHA = 96
+SELECT_GLOW_EXPAND = 3
 BROKEN_COLOR = (170, 178, 188)
 BROKEN_EDGE = (120, 128, 140)
 TEXT_COLOR = (30, 40, 50)
@@ -558,6 +561,17 @@ def main():
             screen.blit(label, pos)
         return label
 
+    def draw_selection_glow(center, glow_r):
+        outer_r = glow_r + SELECT_GLOW_EXPAND
+        fx_size = outer_r * 2
+        fx = pygame.Surface((fx_size, fx_size), pygame.SRCALPHA)
+        c = outer_r
+        pygame.draw.circle(
+            fx, (*SELECT_GLOW_COLOR, max(32, SELECT_GLOW_ALPHA // 2)), (c, c), outer_r
+        )
+        pygame.draw.circle(fx, (*SELECT_GLOW_COLOR, SELECT_GLOW_ALPHA), (c, c), glow_r)
+        screen.blit(fx, (center[0] - c, center[1] - c))
+
     def start_slash(row_idx, start_idx, end_idx, actor):
         nonlocal slash_effect, pending_remove
         centers = get_row_centers(rows)
@@ -796,11 +810,9 @@ def main():
                                 piece_r = min(icon.get_width(), icon.get_height()) // 2
                                 glow_r = max(RADIUS, piece_r - 1)
                                 glow_r = min(glow_r, RADIUS + 5)
-                                left_shift = 4 + int(glow_r * 0.25)
+                                left_shift = int(glow_r * 0.4)
                                 ring_center = (int(x) - left_shift, int(y))
-                                pygame.draw.circle(
-                                    screen, CIRCLE_HL, ring_center, glow_r, 3
-                                )
+                                draw_selection_glow(ring_center, glow_r)
                             icon_rect = icon.get_rect(center=(int(x), int(y)))
                             screen.blit(icon, icon_rect)
                         else:
