@@ -6,8 +6,9 @@ import math
 import pygame
 
 from ai_profession_policy import get_opponent_finish_checker, get_skill_policy
-from constants import HEIGHT, RADIUS, WIDTH
+from constants import BOARD_COLS, GAP, HEIGHT, RADIUS, WIDTH
 from game_logic import (
+    find_board_cell,
     find_circle,
     find_hit_by_segment,
     get_row_centers,
@@ -30,6 +31,7 @@ from skill_system import (
     get_skill_mode,
     get_skill_name,
     reset_shield as reset_shield_state,
+    shadow_hand_destinations,
     shield_turns_for_cell as shield_turns_for_cell_state,
     update_shield_states_after_action as update_shield_states_after_action_state,
 )
@@ -106,10 +108,16 @@ SKILL_MODE_HINTS = {
     "shield": "圣盾模式：点击一个完整棋子施加护盾",
     "cross": "十字斩模式：点击中心棋子释放技能",
 }
+SKILL_MODE_HINTS["shadow_hand"] = (
+    "\u6697\u624b\u6a21\u5f0f\uff1a\u5148\u70b9\u4e00\u4e2a\u5b58\u5728\u7684\u68cb\u5b50\uff0c"
+    "\u518d\u70b9\u4efb\u610f\u76ee\u6807\u4ea4\u6362\uff08\u542b\u7834\u788e\u4f4d\uff09\uff0c"
+    "\u884c\u5c3e\u53ef\u65b0\u589e\u69fd\u4f4d"
+)
 PROFESSION_BUTTON_ICON_HEIGHT = 24
 PROFESSION_HEADER_ICON_HEIGHT = 22
 PROFESSION_BATTLE_ICON_HEIGHT = 20
 PROFESSION_ICON_TEXT_GAP = 8
+PROFESSION_ICON_SCALE = {"thief": 1.18}
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -213,7 +221,7 @@ def main():
     battle_piece_icons = []
     broken_piece_icons = []
 
-    def load_icon_asset(path, target_h=48):
+    def load_icon_asset(path, target_h=48, min_width=38):
         try:
             icon = pygame.image.load(path).convert_alpha()
         except pygame.error:
@@ -224,7 +232,7 @@ def main():
             return None
 
         icon = icon.subsurface(trim).copy()
-        target_w = max(38, int(icon.get_width() * (target_h / icon.get_height())))
+        target_w = max(min_width, int(icon.get_width() * (target_h / icon.get_height())))
         return pygame.transform.smoothscale(icon, (target_w, target_h))
 
     def find_asset_path(stem):
@@ -287,13 +295,29 @@ def main():
         icon_path = find_asset_path(icon_stem)
         if not icon_path:
             continue
-        menu_icon = load_icon_asset(icon_path, target_h=PROFESSION_BUTTON_ICON_HEIGHT)
+        icon_scale = PROFESSION_ICON_SCALE.get(profession_id, 1.0)
+        menu_h = max(1, int(PROFESSION_BUTTON_ICON_HEIGHT * icon_scale))
+        header_h = max(1, int(PROFESSION_HEADER_ICON_HEIGHT * icon_scale))
+        battle_h = max(1, int(PROFESSION_BATTLE_ICON_HEIGHT * icon_scale))
+        menu_icon = load_icon_asset(
+            icon_path,
+            target_h=menu_h,
+            min_width=0,
+        )
         if menu_icon is not None:
             profession_icons_menu[profession_id] = menu_icon
-        header_icon = load_icon_asset(icon_path, target_h=PROFESSION_HEADER_ICON_HEIGHT)
+        header_icon = load_icon_asset(
+            icon_path,
+            target_h=header_h,
+            min_width=0,
+        )
         if header_icon is not None:
             profession_icons_header[profession_id] = header_icon
-        battle_icon = load_icon_asset(icon_path, target_h=PROFESSION_BATTLE_ICON_HEIGHT)
+        battle_icon = load_icon_asset(
+            icon_path,
+            target_h=battle_h,
+            min_width=0,
+        )
         if battle_icon is not None:
             profession_icons_battle[profession_id] = battle_icon
 
@@ -433,6 +457,8 @@ def main():
     current_player = "player"
     skill_used_by = {"player": False, "ai": False}
     skill_mode = None
+    skill_source_cell = None
+    shadow_empty_cells = set()
     shield_states = {
         "player": {"piece": None, "turns_left": 0, "action_count": 0},
         "ai": {"piece": None, "turns_left": 0, "action_count": 0},
@@ -508,11 +534,30 @@ def main():
     ]
     profession_label_y = buttons_y + (btn_h + btn_gap) * 3 + 6
     profession_buttons_y = profession_label_y + label_font.get_height() + 8
-    profession_btn_w = (btn_w - 12) // 2
+    profession_btn_gap = 6
+    profession_row_w = btn_w + 24
+    profession_row_offset = (profession_row_w - btn_w) // 2
+    profession_count = max(1, len(PROFESSION_ORDER))
+    profession_btn_w = (
+        profession_row_w - profession_btn_gap * (profession_count - 1)
+    ) // profession_count
+
+    def profession_btn_x(base_x, idx):
+        return base_x - profession_row_offset + idx * (
+            profession_btn_w + profession_btn_gap
+        )
+
+    mode_option_count = 2
+    mode_btn_gap = 8
+    mode_btn_w = (btn_w - mode_btn_gap * (mode_option_count - 1)) // mode_option_count
+
+    def mode_btn_x(base_x, idx):
+        return base_x + idx * (mode_btn_w + mode_btn_gap)
+
     profession_buttons = [
         Button(
             (
-                left_x + i * (profession_btn_w + 12),
+                profession_btn_x(left_x, i),
                 profession_buttons_y,
                 profession_btn_w,
                 btn_h,
@@ -541,9 +586,9 @@ def main():
     custom_mode_buttons = [
         Button(
             (
-                left_x + i * (profession_btn_w + 12),
+                mode_btn_x(left_x, i),
                 custom_mode_buttons_y,
-                profession_btn_w,
+                mode_btn_w,
                 btn_h,
             ),
             label,
@@ -555,7 +600,7 @@ def main():
     ai_profession_buttons = [
         Button(
             (
-                left_x + i * (profession_btn_w + 12),
+                profession_btn_x(left_x, i),
                 custom_ai_prof_buttons_y,
                 profession_btn_w,
                 btn_h,
@@ -591,7 +636,7 @@ def main():
     custom_profession_buttons = [
         Button(
             (
-                right_x + i * (profession_btn_w + 12),
+                profession_btn_x(right_x, i),
                 custom_prof_buttons_y,
                 profession_btn_w,
                 btn_h,
@@ -680,6 +725,141 @@ def main():
     def update_shield_states_after_action():
         update_shield_states_after_action_state(shield_states, rows)
 
+    def _is_cell(value):
+        return (
+            isinstance(value, (tuple, list))
+            and len(value) == 2
+            and isinstance(value[0], int)
+            and isinstance(value[1], int)
+        )
+
+    def parse_skill_target(skill_id, raw_target):
+        if skill_id == "shadow_hand":
+            if not isinstance(raw_target, (tuple, list)) or len(raw_target) != 2:
+                return None
+            source_cell = raw_target[0]
+            dest_cell = raw_target[1]
+            if not _is_cell(source_cell) or not _is_cell(dest_cell):
+                return None
+            return (
+                (int(source_cell[0]), int(source_cell[1])),
+                (int(dest_cell[0]), int(dest_cell[1])),
+            )
+        if not _is_cell(raw_target):
+            return None
+        return (int(raw_target[0]), int(raw_target[1]))
+
+    def move_shield_piece(source_cell, dest_cell, swap_back=False):
+        for owner in ("player", "ai"):
+            piece = shield_states[owner]["piece"]
+            if piece == source_cell:
+                shield_states[owner]["piece"] = dest_cell
+            elif swap_back and piece == dest_cell:
+                shield_states[owner]["piece"] = source_cell
+
+    def _shadow_virtual_targets():
+        centers = get_row_centers(rows)
+        targets = []
+        step = RADIUS * 2 + GAP
+        for row_idx, row in enumerate(centers):
+            if row_idx >= len(rows):
+                continue
+            if len(rows[row_idx]) >= BOARD_COLS:
+                continue
+            if not row:
+                continue
+            x = row[-1][0] + step
+            y = row[-1][1]
+            targets.append((row_idx, len(rows[row_idx]), x, y))
+        return targets
+
+    def _find_shadow_hand_target(pos):
+        hit = find_board_cell(rows, pos)
+        if hit:
+            return hit
+        for row_idx, idx, x, y in _shadow_virtual_targets():
+            dx = pos[0] - x
+            dy = pos[1] - y
+            if dx * dx + dy * dy <= RADIUS * RADIUS:
+                return row_idx, idx
+        return None
+
+    def apply_board_updates(board_updates):
+        for cell, active in board_updates:
+            if not _is_cell(cell):
+                continue
+            row_idx, idx = int(cell[0]), int(cell[1])
+            if row_idx < 0 or row_idx >= len(rows):
+                continue
+            if idx == len(rows[row_idx]) and bool(active) and len(rows[row_idx]) < BOARD_COLS:
+                rows[row_idx].append(True)
+                shadow_empty_cells.discard((row_idx, idx))
+                continue
+            if idx < 0 or idx >= len(rows[row_idx]):
+                continue
+            rows[row_idx][idx] = bool(active)
+            if rows[row_idx][idx]:
+                shadow_empty_cells.discard((row_idx, idx))
+
+    def switch_turn(actor):
+        nonlocal current_player, ai_timer
+        current_player = "ai" if actor == "player" else "player"
+        ai_timer = AI_DELAY if current_player == "ai" else 0.0
+
+    def apply_instant_skill_effect(execution, skill_id, actor):
+        nonlocal game_state, winner
+        if skill_id == "shadow_hand":
+            source_cell, dest_cell = execution.shadow_move or (None, None)
+            swap_back = False
+            dest_was_existing_empty = False
+            if source_cell is not None and dest_cell is not None:
+                dest_row, dest_idx = dest_cell
+                if (
+                    0 <= dest_row < len(rows)
+                    and 0 <= dest_idx < len(rows[dest_row])
+                ):
+                    if rows[dest_row][dest_idx]:
+                        swap_back = True
+                    else:
+                        dest_was_existing_empty = True
+            if execution.board_updates:
+                apply_board_updates(execution.board_updates)
+            if source_cell is not None:
+                source_row, source_idx = source_cell
+                if (
+                    0 <= source_row < len(rows)
+                    and 0 <= source_idx < len(rows[source_row])
+                    and not rows[source_row][source_idx]
+                ):
+                    if dest_was_existing_empty:
+                        shadow_empty_cells.discard(source_cell)
+                    else:
+                        shadow_empty_cells.add(source_cell)
+                else:
+                    shadow_empty_cells.discard(source_cell)
+            if dest_cell is not None:
+                dest_row, dest_idx = dest_cell
+                if (
+                    0 <= dest_row < len(rows)
+                    and 0 <= dest_idx < len(rows[dest_row])
+                    and rows[dest_row][dest_idx]
+                ):
+                    shadow_empty_cells.discard(dest_cell)
+            if source_cell is not None and dest_cell is not None:
+                move_shield_piece(source_cell, dest_cell, swap_back=swap_back)
+            update_shield_states_after_action()
+            if all(not piece for row in rows for piece in row):
+                winner = actor
+                if match_mode == "best3" or quick_mode:
+                    match_wins[winner] += 1
+                game_state = "gameover"
+                return
+            switch_turn(actor)
+            return
+
+        if execution.board_updates:
+            apply_board_updates(execution.board_updates)
+
     def clear_player_selection():
         nonlocal selecting, select_row, select_start, select_end
         nonlocal select_bounds, select_touched, slash_points, last_pos, cancel_hover
@@ -714,16 +894,19 @@ def main():
         ]
 
     def clear_round_state():
-        nonlocal winner, slash_effect, pending_remove, skill_mode
+        nonlocal winner, slash_effect, pending_remove, skill_mode, skill_source_cell
         winner = None
         clear_player_selection()
         slash_effect = None
         pending_remove = None
         skill_mode = None
+        skill_source_cell = None
+        shadow_empty_cells.clear()
         reset_shield()
 
     def begin_game(first):
         nonlocal rows, current_player, game_state, ai_timer, intro_timer, skill_mode
+        nonlocal skill_source_cell
         if match_mode == "best3" or quick_mode:
             rows = [[True for _ in range(c)] for c in generate_rows()]
         else:
@@ -733,6 +916,7 @@ def main():
         skill_used_by["player"] = False
         skill_used_by["ai"] = False
         skill_mode = None
+        skill_source_cell = None
         current_player = first
         if match_mode == "best3" or quick_mode:
             intro_timer = 1.6
@@ -798,7 +982,7 @@ def main():
     def return_to_menu():
         nonlocal game_state, quick_mode, game_number, match_wins, match_removed
         nonlocal game1_first, game2_first, ai_timer, intro_timer, pressed_button
-        nonlocal skill_mode, auto_random_ai_profession
+        nonlocal skill_mode, skill_source_cell, auto_random_ai_profession
         clear_round_state()
         quick_mode = False
         auto_random_ai_profession = False
@@ -814,6 +998,7 @@ def main():
         skill_used_by["ai"] = False
         reset_shield()
         skill_mode = None
+        skill_source_cell = None
         game_state = "main_menu"
 
     def find_button_at(pos):
@@ -889,7 +1074,7 @@ def main():
 
     def handle_button_click(btn):
         nonlocal game_state, difficulty, first_player, match_mode
-        nonlocal selected_profession, ai_profession, skill_mode, single_mode
+        nonlocal selected_profession, ai_profession, skill_mode, skill_source_cell, single_mode
         nonlocal auto_random_ai_profession
         if game_state == "main_menu":
             if btn is main_buttons[0]:
@@ -939,6 +1124,7 @@ def main():
                 if btn is opt_btn:
                     single_mode = ["classic", "profession"][idx]
                     skill_mode = None
+                    skill_source_cell = None
                     return
             if profession_mode_enabled():
                 for idx, opt_btn in enumerate(custom_profession_buttons):
@@ -975,11 +1161,13 @@ def main():
                     return
                 if skill_mode is not None:
                     skill_mode = None
+                    skill_source_cell = None
                     clear_player_selection()
                     return
                 if skill_used_by["player"]:
                     return
                 skill_mode = get_skill_mode(current_skill_id("player"))
+                skill_source_cell = None
                 clear_player_selection()
                 return
             if btn is exit_button:
@@ -1181,7 +1369,10 @@ def main():
             cross_thick,
         )
         fx.set_alpha(marker_alpha)
-        screen.blit(fx, (cx - surf_w // 2, cy - surf_h // 2))
+        shield_stretch_y = 1.12
+        stretched_h = int(surf_h * shield_stretch_y)
+        fx = pygame.transform.smoothscale(fx, (surf_w, stretched_h))
+        screen.blit(fx, (cx - surf_w // 2, cy - stretched_h // 2))
 
         turn_text = str(turns_left)
         num_y = cy - shield_r - small_font.get_height() // 2 - 3
@@ -1257,9 +1448,7 @@ def main():
                 match_wins[winner] += 1
             game_state = "gameover"
             return
-        current_player = "ai" if actor == "player" else "player"
-        if current_player == "ai":
-            ai_timer = AI_DELAY
+        switch_turn(actor)
 
     running = True
     while running:
@@ -1294,14 +1483,30 @@ def main():
                 if current_player == "player" and not slash_effect:
                     if skill_mode is not None:
                         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                            hit = find_circle(rows, event.pos)
-                            if not hit:
-                                continue
                             player_skill_id = current_skill_id("player")
+                            skill_target = None
+                            if skill_mode == "shadow_hand":
+                                if skill_source_cell is None:
+                                    source_hit = find_circle(rows, event.pos)
+                                    if not source_hit:
+                                        continue
+                                    if not shadow_hand_destinations(rows, source_hit):
+                                        continue
+                                    skill_source_cell = source_hit
+                                    continue
+                                target_hit = _find_shadow_hand_target(event.pos)
+                                if not target_hit:
+                                    continue
+                                skill_target = (skill_source_cell, target_hit)
+                            else:
+                                hit = find_circle(rows, event.pos)
+                                if not hit:
+                                    continue
+                                skill_target = hit
                             execution = execute_skill(
                                 build_skill_context("player"),
                                 player_skill_id,
-                                hit,
+                                skill_target,
                             )
                             if not execution.consume_skill:
                                 continue
@@ -1312,8 +1517,15 @@ def main():
                                     "player",
                                 ):
                                     continue
+                            else:
+                                apply_instant_skill_effect(
+                                    execution,
+                                    player_skill_id,
+                                    "player",
+                                )
                             skill_used_by["player"] = True
                             skill_mode = None
+                            skill_source_cell = None
                     else:
                         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                             selecting = True
@@ -1432,31 +1644,33 @@ def main():
                         if action_type == "skill":
                             skill_id = ai_action.get("skill_id")
                             target = ai_action.get("target")
-                            if (
-                                isinstance(target, (tuple, list))
-                                and len(target) == 2
-                                and isinstance(skill_id, str)
-                            ):
-                                row_idx = int(target[0])
-                                idx = int(target[1])
-                                execution = execute_skill(
-                                    build_skill_context("ai"),
-                                    skill_id,
-                                    (row_idx, idx),
-                                )
-                                if execution.consume_skill:
-                                    if execution.start_animation:
-                                        if start_skill_slash(
-                                            execution.pending_remove_cells,
-                                            execution.fx_cells,
-                                            "ai",
-                                        ):
+                            if isinstance(skill_id, str):
+                                parsed_target = parse_skill_target(skill_id, target)
+                                if parsed_target is not None:
+                                    execution = execute_skill(
+                                        build_skill_context("ai"),
+                                        skill_id,
+                                        parsed_target,
+                                    )
+                                    if execution.consume_skill:
+                                        if execution.start_animation:
+                                            if start_skill_slash(
+                                                execution.pending_remove_cells,
+                                                execution.fx_cells,
+                                                "ai",
+                                            ):
+                                                skill_used_by["ai"] = True
+                                                executed = True
+                                        else:
+                                            apply_instant_skill_effect(
+                                                execution,
+                                                skill_id,
+                                                "ai",
+                                            )
                                             skill_used_by["ai"] = True
+                                            if skill_id != "shadow_hand":
+                                                ai_timer = AI_DELAY
                                             executed = True
-                                    else:
-                                        skill_used_by["ai"] = True
-                                        ai_timer = AI_DELAY
-                                        executed = True
                         elif action_type == "normal":
                             row_idx = ai_action.get("row", -1)
                             start_idx = ai_action.get("start", -1)
@@ -1490,6 +1704,22 @@ def main():
 
         if game_state in ("playing", "gameover"):
             centers = get_row_centers(rows)
+            valid_shadow_empty_cells = {
+                (row_idx, idx)
+                for row_idx, row in enumerate(rows)
+                for idx, active in enumerate(row)
+                if not active
+            }
+            shadow_empty_cells.intersection_update(valid_shadow_empty_cells)
+            shadow_hand_targets = set()
+            shadow_virtual_positions = {}
+            if skill_mode == "shadow_hand" and skill_source_cell is not None:
+                shadow_hand_targets = set(
+                    shadow_hand_destinations(rows, skill_source_cell)
+                )
+                for row_idx, idx, x, y in _shadow_virtual_targets():
+                    if (row_idx, idx) in shadow_hand_targets:
+                        shadow_virtual_positions[(row_idx, idx)] = (x, y)
             for row_idx, row in enumerate(centers):
                 for idx, (x, y) in enumerate(row):
                     selected = False
@@ -1502,6 +1732,14 @@ def main():
                         lo = min(select_start, select_end)
                         hi = max(select_start, select_end)
                         selected = lo <= idx <= hi
+                    if (
+                        skill_mode == "shadow_hand"
+                        and skill_source_cell == (row_idx, idx)
+                    ):
+                        selected = True
+                    target_highlight = (row_idx, idx) in shadow_hand_targets
+                    if target_highlight:
+                        draw_selection_glow((int(x), int(y)), RADIUS)
 
                     if rows[row_idx][idx]:
                         piece_r = RADIUS
@@ -1542,6 +1780,8 @@ def main():
                                 shield_center = (int(x) - left_shift, int(y))
                             draw_shield_marker(shield_center, piece_r, shield_turns)
                     else:
+                        if (row_idx, idx) in shadow_empty_cells:
+                            continue
                         if broken_piece_icons:
                             icon = broken_piece_icons[
                                 (row_idx * len(row) + idx) % len(broken_piece_icons)
@@ -1569,6 +1809,9 @@ def main():
                                 (int(x + RADIUS * 0.5), int(y - 6)),
                                 2,
                             )
+            for _target_cell, (x, y) in shadow_virtual_positions.items():
+                draw_selection_glow((int(x), int(y)), RADIUS)
+                pygame.draw.circle(screen, CIRCLE_HL, (int(x), int(y)), RADIUS, 2)
 
             if game_state == "playing":
                 if profession_mode_enabled():
@@ -1702,6 +1945,18 @@ def main():
                     hint_text = f"可用技能：{skill_name()}"
                 else:
                     hint_text = "沿同一排连续划棋子，可一次收走连续区间"
+                if skill_mode == "shadow_hand":
+                    if skill_source_cell is None:
+                        hint_text = (
+                            "\u6697\u624b\u6a21\u5f0f\uff1a\u5148\u9009\u62e9\u4e00\u4e2a"
+                            "\u4ecd\u5b58\u5728\u7684\u68cb\u5b50"
+                        )
+                    else:
+                        hint_text = (
+                            "\u6697\u624b\u6a21\u5f0f\uff1a\u518d\u70b9\u4efb\u610f"
+                            "\u68cb\u4f4d\u4ea4\u6362\uff0c\u6216\u70b9\u9ad8\u4eae\u7684"
+                            "\u65b0\u589e\u69fd\u4f4d"
+                        )
                 hint_w, hint_h = small_font.size(hint_text)
                 hint_x = right_anchor - hint_w
                 hint_y = info_rect.y + pad + (font.get_height() - hint_h) // 2
@@ -1897,7 +2152,7 @@ def main():
             draw_panel("规则")
             rules_lines = [
                 "1. 同一横排连续划过即可移除。",
-                "2. 破碎棋子会阻挡，不能跨越。",
+                "2. 空位不会阻挡，可连续划过。",
                 "3. 单人游戏包含：经典模式、职业模式、自定义游戏。",
                 "4. 经典/职业默认三局两胜，默认玩家先手。",
                 "5. 职业模式中玩家与AI每局各可使用1次技能。",
@@ -2014,5 +2269,3 @@ def main():
     if mixer_ready:
         pygame.mixer.music.stop()
     pygame.quit()
-
-

@@ -37,17 +37,19 @@ def find_circle(rows, pos):
     return None
 
 
+def find_board_cell(rows, pos):
+    centers = get_row_centers(rows)
+    for row_idx, row in enumerate(centers):
+        for idx, (x, y) in enumerate(row):
+            if point_in_circle(pos[0], pos[1], x, y, RADIUS):
+                return row_idx, idx
+    return None
+
+
 def get_segment_bounds(rows, row_idx, index):
     if not rows[row_idx][index]:
         return None
-    lo = index
-    while lo - 1 >= 0 and rows[row_idx][lo - 1]:
-        lo -= 1
-    hi = index
-    max_idx = len(rows[row_idx]) - 1
-    while hi + 1 <= max_idx and rows[row_idx][hi + 1]:
-        hi += 1
-    return lo, hi
+    return 0, len(rows[row_idx]) - 1
 
 
 def get_segments(rows):

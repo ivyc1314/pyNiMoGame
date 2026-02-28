@@ -6,7 +6,7 @@ from game_logic import (
     evaluate_result,
     nim_sum,
 )
-from skill_system import cross_targets
+from skill_system import cross_targets, shadow_hand_destinations
 
 
 def _best_cross_action(rows, ai_context):
@@ -96,6 +96,44 @@ def _best_shield_action(rows, ai_context):
     return best_action, best_score, False
 
 
+def _best_shadow_hand_action(rows, ai_context):
+    best_action = None
+    best_score = -10**9
+    for source_row, row in enumerate(rows):
+        for source_idx, active in enumerate(row):
+            if not active:
+                continue
+            for target_row, target_idx in shadow_hand_destinations(
+                rows, (source_row, source_idx)
+            ):
+                board = copy_rows(rows)
+                if 0 <= target_row < len(board) and 0 <= target_idx < len(board[target_row]):
+                    board[source_row][source_idx], board[target_row][target_idx] = (
+                        board[target_row][target_idx],
+                        board[source_row][source_idx],
+                    )
+                elif (
+                    0 <= target_row < len(board)
+                    and target_idx == len(board[target_row])
+                ):
+                    board[source_row][source_idx] = False
+                    board[target_row].append(True)
+                else:
+                    continue
+                score = evaluate_result(rows, board, 0, ai_context)
+                if score > best_score:
+                    best_score = score
+                    best_action = {
+                        "type": "skill",
+                        "skill_id": "shadow_hand",
+                        "target": (
+                            (source_row, source_idx),
+                            (target_row, target_idx),
+                        ),
+                    }
+    return best_action, best_score, False
+
+
 def _never_finish_with_skill(_rows, _ai_context):
     return False
 
@@ -117,6 +155,7 @@ def _cross_can_finish_with_skill(rows, _ai_context):
 _SKILL_POLICY_BY_PROFESSION = {
     "swordsman": _best_cross_action,
     "paladin": _best_shield_action,
+    "thief": _best_shadow_hand_action,
 }
 _OPPONENT_FINISH_CHECKERS = {
     "swordsman": _cross_can_finish_with_skill,
