@@ -285,12 +285,26 @@ def main():
     MUSIC_FADE_MS = 2000
     MUSIC_VOLUME = 0.55
     TRACK_END_GUARD_S = 2.2
+    PREFERRED_MUSIC_TRACKS = [
+        "delosound-medieval-background-351307.mp3",
+        "deuslower-dark-fantasy-ambient-dungeon-synthpiano-verse-248214.mp3",
+        "montogoronto-ominousdark-medievalfantasy-song-309510.mp3",
+        "syouki_takahashi-midnight-forest-184304.mp3",
+    ]
 
     def discover_music_tracks():
         tracks = []
+        for name in PREFERRED_MUSIC_TRACKS:
+            track_path = os.path.join(music_dir, name)
+            if os.path.isfile(track_path):
+                tracks.append(track_path)
+        if tracks:
+            return tracks
+
+        fallback_tracks = []
         for ext in ("*.mp3", "*.ogg", "*.wav"):
-            tracks.extend(sorted(glob.glob(os.path.join(music_dir, ext))))
-        return tracks
+            fallback_tracks.extend(sorted(glob.glob(os.path.join(music_dir, ext))))
+        return fallback_tracks
 
     def start_music_track(track_idx, fade_ms=MUSIC_FADE_MS):
         nonlocal music_index, current_track, music_transitioning
