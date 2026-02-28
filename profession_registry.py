@@ -7,6 +7,7 @@ class ProfessionDef:
     label: str
     intro_lines: tuple[str, ...]
     skill_id: str
+    icon_stem: str
 
 
 _PROFESSION_ORDER = ("paladin", "swordsman")
@@ -21,16 +22,18 @@ _PROFESSION_REGISTRY: dict[str, ProfessionDef] = {
             "护盾生效期间可抵挡1次移除",
         ),
         skill_id="shield",
+        icon_stem="圣骑士标志",
     ),
     "swordsman": ProfessionDef(
         id="swordsman",
-        label="剑士",
+        label="剑客",
         intro_lines=(
             "定位：强势进攻",
             "技能【十字斩】：以目标为中心展开",
             "可一次清除横向与纵向目标",
         ),
         skill_id="cross",
+        icon_stem="剑客标志",
     ),
 }
 
@@ -59,3 +62,7 @@ def get_profession_intro_lines(profession_id: str) -> list[str]:
 
 def get_profession_skill_id(profession_id: str) -> str:
     return get_profession(profession_id).skill_id
+
+
+def get_profession_icon_stem(profession_id: str) -> str:
+    return get_profession(profession_id).icon_stem

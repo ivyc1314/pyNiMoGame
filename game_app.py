@@ -17,6 +17,7 @@ from game_logic import (
 )
 from profession_registry import (
     get_default_profession,
+    get_profession_icon_stem,
     get_profession_ids,
     get_profession_intro_lines,
     get_profession_label,
@@ -105,6 +106,10 @@ SKILL_MODE_HINTS = {
     "shield": "圣盾模式：点击一个完整棋子施加护盾",
     "cross": "十字斩模式：点击中心棋子释放技能",
 }
+PROFESSION_BUTTON_ICON_HEIGHT = 24
+PROFESSION_HEADER_ICON_HEIGHT = 22
+PROFESSION_BATTLE_ICON_HEIGHT = 20
+PROFESSION_ICON_TEXT_GAP = 8
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -273,6 +278,24 @@ def main():
             pygame.transform.rotozoom(base, 7, 1.02),
         ]
         break
+
+    profession_icons_menu = {}
+    profession_icons_header = {}
+    profession_icons_battle = {}
+    for profession_id in PROFESSION_ORDER:
+        icon_stem = get_profession_icon_stem(profession_id)
+        icon_path = find_asset_path(icon_stem)
+        if not icon_path:
+            continue
+        menu_icon = load_icon_asset(icon_path, target_h=PROFESSION_BUTTON_ICON_HEIGHT)
+        if menu_icon is not None:
+            profession_icons_menu[profession_id] = menu_icon
+        header_icon = load_icon_asset(icon_path, target_h=PROFESSION_HEADER_ICON_HEIGHT)
+        if header_icon is not None:
+            profession_icons_header[profession_id] = header_icon
+        battle_icon = load_icon_asset(icon_path, target_h=PROFESSION_BATTLE_ICON_HEIGHT)
+        if battle_icon is not None:
+            profession_icons_battle[profession_id] = battle_icon
 
     slash_sound = None
     button_click_sound = None
@@ -606,15 +629,30 @@ def main():
             return "职业"
         return "大师"
 
+    def get_actor_profession(actor="player"):
+        return selected_profession if actor == "player" else ai_profession
+
     def profession_text(actor="player"):
-        profession = selected_profession if actor == "player" else ai_profession
+        profession = get_actor_profession(actor)
         return get_profession_label(profession)
+
+    def get_profession_icon(profession_id, style="menu"):
+        if style == "battle":
+            icon_map = profession_icons_battle
+        elif style == "header":
+            icon_map = profession_icons_header
+        else:
+            icon_map = profession_icons_menu
+        return icon_map.get(profession_id)
+
+    def get_actor_profession_icon(actor="player", style="menu"):
+        return get_profession_icon(get_actor_profession(actor), style=style)
 
     def profession_mode_enabled():
         return single_mode == "profession"
 
     def current_skill_id(actor="player"):
-        profession = selected_profession if actor == "player" else ai_profession
+        profession = get_actor_profession(actor)
         return get_profession_skill_id(profession)
 
     def skill_name(actor="player"):
@@ -1034,6 +1072,14 @@ def main():
         label = text_font.render(text, True, MENU_LABEL_COLOR)
         screen.blit(label, pos)
 
+    def draw_menu_text_with_icon(text, text_font, pos, icon):
+        text_x, text_y = pos
+        if icon is not None:
+            icon_y = text_y + max(0, (text_font.get_height() - icon.get_height()) // 2)
+            screen.blit(icon, (text_x, icon_y))
+            text_x += icon.get_width() + PROFESSION_ICON_TEXT_GAP
+        draw_menu_text(text, text_font, (text_x, text_y))
+
     def draw_battle_text(
         text,
         text_font,
@@ -1053,6 +1099,27 @@ def main():
             screen.blit(shadow_label, (pos[0] + 1, pos[1] + 2))
             screen.blit(label, pos)
         return label
+
+    def draw_battle_text_with_icon(
+        text,
+        text_font,
+        pos,
+        icon,
+        color=BATTLE_SUBTEXT_MAIN,
+        shadow=BATTLE_SUBTEXT_SHADOW,
+    ):
+        text_x, text_y = pos
+        if icon is not None:
+            icon_y = text_y + max(0, (text_font.get_height() - icon.get_height()) // 2)
+            screen.blit(icon, (text_x, icon_y))
+            text_x += icon.get_width() + PROFESSION_ICON_TEXT_GAP
+        draw_battle_text(
+            text,
+            text_font,
+            (text_x, text_y),
+            color=color,
+            shadow=shadow,
+        )
 
     def draw_selection_glow(center, glow_r):
         outer_r = glow_r + SELECT_GLOW_EXPAND
@@ -1562,13 +1629,7 @@ def main():
             )
             y += font.get_height() + gap
 
-            if profession_mode_enabled():
-                diff_text = (
-                    f"难度：{difficulty_text()}  玩家职业：{profession_text('player')}  "
-                    f"AI职业：{profession_text('ai')}"
-                )
-            else:
-                diff_text = f"难度：{difficulty_text()}"
+            diff_text = f"难度：{difficulty_text()}"
             draw_battle_text(diff_text, font, (info_rect.x + 20, y))
             if quick_mode:
                 removed_line = f"碎子数：玩家{match_removed['player']} - AI赌徒{match_removed['ai']}"
@@ -1583,6 +1644,22 @@ def main():
                     shadow=BATTLE_SUBTEXT_SHADOW,
                 )
             y += font.get_height() + gap
+            if profession_mode_enabled():
+                player_line = f"玩家职业：{profession_text('player')}"
+                ai_line = f"AI职业：{profession_text('ai')}"
+                draw_battle_text_with_icon(
+                    player_line,
+                    small_font,
+                    (info_rect.x + 20, y),
+                    get_actor_profession_icon("player", style="battle"),
+                )
+                draw_battle_text_with_icon(
+                    ai_line,
+                    small_font,
+                    (info_rect.centerx + 10, y),
+                    get_actor_profession_icon("ai", style="battle"),
+                )
+                y += small_font.get_height() + 4
 
             if quick_mode:
                 mode_line = "三局两胜"
@@ -1601,17 +1678,17 @@ def main():
                 color=BATTLE_SUBTEXT_MAIN,
                 shadow=BATTLE_SUBTEXT_SHADOW,
             )
-            y += small_font.get_height() + gap
 
             if score_line:
+                score_w, _ = small_font.size(score_line)
                 draw_battle_text(
                     score_line,
                     small_font,
-                    (info_rect.x + 20, y),
+                    (right_anchor - score_w, y),
                     color=BATTLE_SUBTEXT_MAIN,
                     shadow=BATTLE_SUBTEXT_SHADOW,
                 )
-                y += small_font.get_height() + gap
+            y += small_font.get_height() + gap
 
             if game_state == "playing" and current_player == "player":
                 if not profession_mode_enabled():
@@ -1707,10 +1784,11 @@ def main():
                     )
             quick_y = label_y
             if profession_mode_enabled():
-                draw_menu_text(
+                draw_menu_text_with_icon(
                     f"{profession_text('player')}介绍",
                     label_font,
                     (right_x, quick_y),
+                    get_actor_profession_icon("player", style="header"),
                 )
                 quick_y += label_font.get_height() + 6
                 for line in get_profession_intro_lines(selected_profession):

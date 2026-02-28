@@ -58,7 +58,18 @@ class Button:
         self.rect = pygame.Rect(rect)
         self.text = text
 
-    def draw(self, surface, font, selected=False, palette=None, pressed=False):
+    def draw(
+        self,
+        surface,
+        font,
+        selected=False,
+        palette=None,
+        pressed=False,
+        text=None,
+        text_offset_x=0,
+        icon=None,
+        icon_padding=10,
+    ):
         if palette:
             base = palette["base"]
             highlight = palette["highlight"]
@@ -84,8 +95,21 @@ class Button:
         pygame.draw.rect(surface, shadow, shadow_rect, border_radius=10)
         pygame.draw.rect(surface, color, draw_rect, border_radius=10)
         pygame.draw.rect(surface, border, draw_rect, 2, border_radius=10)
-        label = font.render(self.text, True, text_color)
-        surface.blit(label, label.get_rect(center=draw_rect.center))
+        label_text = self.text if text is None else text
+        label = font.render(label_text, True, text_color)
+        if icon is not None:
+            content_w = icon.get_width() + icon_padding + label.get_width()
+            start_x = draw_rect.centerx - content_w // 2
+            icon_y = draw_rect.centery - icon.get_height() // 2
+            surface.blit(icon, (start_x, icon_y))
+            label_rect = label.get_rect(
+                midleft=(start_x + icon.get_width() + icon_padding, draw_rect.centery)
+            )
+            label_rect.x += text_offset_x
+        else:
+            label_rect = label.get_rect(center=draw_rect.center)
+            label_rect.x += text_offset_x
+        surface.blit(label, label_rect)
 
     def hit(self, pos):
         return self.rect.collidepoint(pos)
