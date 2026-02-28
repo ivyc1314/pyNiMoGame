@@ -100,6 +100,7 @@ SHIELD_HILITE_COLOR = (255, 247, 220)
 SHIELD_CROSS_COLOR = (170, 118, 44)
 CROSS_FX_OFFSET_X = -4
 CROSS_FX_OFFSET_Y = -3
+PIECE_MARKER_LEFT_SHIFT_RATIO = 0.20
 SKILL_MODE_HINTS = {
     "shield": "圣盾模式：点击一个完整棋子施加护盾",
     "cross": "十字斩模式：点击中心棋子释放技能",
@@ -207,51 +208,19 @@ def main():
     battle_piece_icons = []
     broken_piece_icons = []
 
-    def cutout_checkerboard(src_surface):
-        w, h = src_surface.get_size()
-        out = pygame.Surface((w, h), pygame.SRCALPHA)
-        for y in range(h):
-            for x in range(w):
-                r, g, b, _ = src_surface.get_at((x, y))
-                diff = max(abs(r - g), abs(g - b), abs(r - b))
-                lum = (r + g + b) // 3
-                if diff <= 10 and 40 <= lum <= 220:
-                    continue
-                if diff <= 16 and 40 <= lum <= 220:
-                    alpha = int(255 * (diff - 10) / 6)
-                    alpha = max(0, min(255, alpha))
-                else:
-                    alpha = 255
-                out.set_at((x, y), (r, g, b, alpha))
-        return out
-
-    def extract_icons_from_sheet(path, target_h=48, split_components=True):
-        icons = []
+    def load_icon_asset(path, target_h=48):
         try:
-            sheet = pygame.image.load(path).convert_alpha()
+            icon = pygame.image.load(path).convert_alpha()
         except pygame.error:
-            return icons
+            return None
 
-        cutout = cutout_checkerboard(sheet)
-        if split_components:
-            mask = pygame.mask.from_surface(cutout, 10)
-            rects = [r for r in mask.get_bounding_rects() if r.w > 40 and r.h > 40]
-            rects.sort(key=lambda r: (r.y, r.x))
-        else:
-            whole = cutout.get_bounding_rect(min_alpha=8)
-            rects = [whole] if whole.w > 0 and whole.h > 0 else []
+        trim = icon.get_bounding_rect(min_alpha=8)
+        if trim.w <= 0 or trim.h <= 0:
+            return None
 
-        for rect in rects:
-            icon = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-            icon.blit(cutout, (0, 0), rect)
-            trim = icon.get_bounding_rect(min_alpha=8)
-            if trim.w <= 0 or trim.h <= 0:
-                continue
-            icon = icon.subsurface(trim).copy()
-            target_w = max(38, int(icon.get_width() * (target_h / icon.get_height())))
-            icon = pygame.transform.smoothscale(icon, (target_w, target_h))
-            icons.append(icon)
-        return icons
+        icon = icon.subsurface(trim).copy()
+        target_w = max(38, int(icon.get_width() * (target_h / icon.get_height())))
+        return pygame.transform.smoothscale(icon, (target_w, target_h))
 
     def find_asset_path(stem):
         for ext in ("png", "jpg", "jpeg", "bmp", "webp"):
@@ -277,32 +246,33 @@ def main():
         except pygame.error:
             battle_bg = None
 
-    piece_paths = [
-        find_asset_path("\u68cb\u5b501"),
-        find_asset_path("\u68cb\u5b502"),
-        find_asset_path("\u68cb\u5b503"),
+    piece_stems = [
+        "\u68cb\u5b501",
+        "\u68cb\u5b502",
+        "\u68cb\u5b503",
     ]
-    for piece_path in piece_paths:
+    for stem in piece_stems:
+        piece_path = find_asset_path(stem)
         if not piece_path:
             continue
-        icons = extract_icons_from_sheet(piece_path, target_h=58, split_components=False)
-        if icons:
-            battle_piece_icons.append(icons[0])
+        icon = load_icon_asset(piece_path, target_h=58)
+        if icon is not None:
+            battle_piece_icons.append(icon)
 
-    broken_sheet_path = find_asset_path("\u7834\u788e\u7684\u68cb\u5b50")
-    if not broken_sheet_path:
-        broken_sheet_path = find_asset_path("\u7834\u788e\u68cb\u5b50")
-    if broken_sheet_path:
-        broken_piece_icons = extract_icons_from_sheet(
-            broken_sheet_path, target_h=62, split_components=False
-        )
-        if broken_piece_icons:
-            base = broken_piece_icons[0]
-            broken_piece_icons = [
-                pygame.transform.rotozoom(base, -8, 0.97),
-                base,
-                pygame.transform.rotozoom(base, 7, 1.02),
-            ]
+    broken_asset_candidates = ["\u7834\u788e\u7684\u68cb\u5b50", "\u7834\u788e\u68cb\u5b50"]
+    for stem in broken_asset_candidates:
+        broken_path = find_asset_path(stem)
+        if not broken_path:
+            continue
+        base = load_icon_asset(broken_path, target_h=62)
+        if base is None:
+            continue
+        broken_piece_icons = [
+            pygame.transform.rotozoom(base, -8, 0.97),
+            base,
+            pygame.transform.rotozoom(base, 7, 1.02),
+        ]
+        break
 
     slash_sound = None
     button_click_sound = None
@@ -1484,7 +1454,7 @@ def main():
                             if selected:
                                 glow_r = max(RADIUS, piece_r - 1)
                                 glow_r = min(glow_r, RADIUS + 5)
-                                left_shift = int(glow_r * 0.4)
+                                left_shift = int(glow_r * PIECE_MARKER_LEFT_SHIFT_RATIO)
                                 ring_center = (int(x) - left_shift, int(y))
                                 draw_selection_glow(ring_center, glow_r)
                             icon_rect = icon.get_rect(center=(int(x), int(y)))
@@ -1499,7 +1469,9 @@ def main():
                                 # Keep the shield marker aligned with the same perspective offset as selection glow.
                                 align_r = max(RADIUS, piece_r - 1)
                                 align_r = min(align_r, RADIUS + 5)
-                                left_shift = int(align_r * 0.4)
+                                left_shift = int(
+                                    align_r * PIECE_MARKER_LEFT_SHIFT_RATIO
+                                )
                                 shield_center = (int(x) - left_shift, int(y))
                             draw_shield_marker(shield_center, piece_r, shield_turns)
                     else:
