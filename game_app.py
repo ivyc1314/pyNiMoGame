@@ -28,6 +28,7 @@ from skill_system import (
     SkillUseContext,
     consume_shield as consume_shield_state,
     execute_skill,
+    iron_bar_edge_from_cells,
     get_skill_mode,
     get_skill_name,
     reset_shield as reset_shield_state,
@@ -107,6 +108,7 @@ PIECE_MARKER_LEFT_SHIFT_RATIO = 0.20
 SKILL_MODE_HINTS = {
     "shield": "圣盾模式：点击一个完整棋子施加护盾",
     "cross": "十字斩模式：点击中心棋子释放技能",
+    "inlay_bar": "嵌条模式：先点一个棋位，再点同排相邻棋位落条",
 }
 SKILL_MODE_HINTS["shadow_hand"] = (
     "\u6697\u624b\u6a21\u5f0f\uff1a\u5148\u70b9\u4e00\u4e2a\u5b58\u5728\u7684\u68cb\u5b50\uff0c"
@@ -220,6 +222,7 @@ def main():
     battle_bg = None
     battle_piece_icons = []
     broken_piece_icons = []
+    iron_bar_icon = None
 
     def load_icon_asset(path, target_h=48, min_width=38):
         try:
@@ -286,6 +289,14 @@ def main():
             pygame.transform.rotozoom(base, 7, 1.02),
         ]
         break
+
+    iron_bar_path = find_asset_path("\u94c1\u6761\u56fe\u7247")
+    if iron_bar_path:
+        iron_bar_icon = load_icon_asset(
+            iron_bar_path,
+            target_h=max(8, int(RADIUS * 0.38)),
+            min_width=max(34, int(RADIUS * 2.3)),
+        )
 
     profession_icons_menu = {}
     profession_icons_header = {}
@@ -458,6 +469,7 @@ def main():
     skill_used_by = {"player": False, "ai": False}
     skill_mode = None
     skill_source_cell = None
+    iron_bar_edges = set()
     shadow_empty_cells = set()
     shield_states = {
         "player": {"piece": None, "turns_left": 0, "action_count": 0},
@@ -535,17 +547,30 @@ def main():
     profession_label_y = buttons_y + (btn_h + btn_gap) * 3 + 6
     profession_buttons_y = profession_label_y + label_font.get_height() + 8
     profession_btn_gap = 6
-    profession_row_w = btn_w + 24
-    profession_row_offset = (profession_row_w - btn_w) // 2
     profession_count = max(1, len(PROFESSION_ORDER))
-    profession_btn_w = (
-        profession_row_w - profession_btn_gap * (profession_count - 1)
+    profession_base_row_w = btn_w + 24
+    profession_small_btn_w = (
+        profession_base_row_w - profession_btn_gap * (profession_count - 1)
     ) // profession_count
+    profession_btn_widths = [profession_small_btn_w for _ in PROFESSION_ORDER]
+    for i, key in enumerate(PROFESSION_ORDER):
+        if key != "paladin":
+            continue
+        paladin_label_w = button_font.size(get_profession_label(key))[0] + 16
+        profession_btn_widths[i] = max(profession_btn_widths[i], paladin_label_w)
+    profession_row_w = (
+        sum(profession_btn_widths)
+        + profession_btn_gap * (profession_count - 1)
+    )
+    profession_row_offset = (profession_row_w - btn_w) // 2
+    profession_btn_offsets = []
+    cursor_x = 0
+    for w in profession_btn_widths:
+        profession_btn_offsets.append(cursor_x)
+        cursor_x += w + profession_btn_gap
 
     def profession_btn_x(base_x, idx):
-        return base_x - profession_row_offset + idx * (
-            profession_btn_w + profession_btn_gap
-        )
+        return base_x - profession_row_offset + profession_btn_offsets[idx]
 
     mode_option_count = 2
     mode_btn_gap = 8
@@ -559,7 +584,7 @@ def main():
             (
                 profession_btn_x(left_x, i),
                 profession_buttons_y,
-                profession_btn_w,
+                profession_btn_widths[i],
                 btn_h,
             ),
             get_profession_label(key),
@@ -602,7 +627,7 @@ def main():
             (
                 profession_btn_x(left_x, i),
                 custom_ai_prof_buttons_y,
-                profession_btn_w,
+                profession_btn_widths[i],
                 btn_h,
             ),
             get_profession_label(key),
@@ -638,7 +663,7 @@ def main():
             (
                 profession_btn_x(right_x, i),
                 custom_prof_buttons_y,
-                profession_btn_w,
+                profession_btn_widths[i],
                 btn_h,
             ),
             get_profession_label(key),
@@ -711,7 +736,12 @@ def main():
         return skill_name()
 
     def build_skill_context(actor):
-        return SkillUseContext(rows=rows, actor=actor, shield_states=shield_states)
+        return SkillUseContext(
+            rows=rows,
+            actor=actor,
+            shield_states=shield_states,
+            iron_bar_edges=iron_bar_edges,
+        )
 
     def reset_shield(owner=None):
         reset_shield_state(shield_states, owner)
@@ -734,7 +764,7 @@ def main():
         )
 
     def parse_skill_target(skill_id, raw_target):
-        if skill_id == "shadow_hand":
+        if skill_id in ("shadow_hand", "inlay_bar"):
             if not isinstance(raw_target, (tuple, list)) or len(raw_target) != 2:
                 return None
             source_cell = raw_target[0]
@@ -783,6 +813,17 @@ def main():
             if dx * dx + dy * dy <= RADIUS * RADIUS:
                 return row_idx, idx
         return None
+
+    def _inlay_bar_destinations(source_cell):
+        source_row, source_idx = source_cell
+        if source_row < 0 or source_row >= len(rows):
+            return []
+        destinations = []
+        for offset in (-1, 1):
+            target_idx = source_idx + offset
+            if 0 <= target_idx < len(rows[source_row]):
+                destinations.append((source_row, target_idx))
+        return destinations
 
     def apply_board_updates(board_updates):
         for cell, active in board_updates:
@@ -901,6 +942,7 @@ def main():
         pending_remove = None
         skill_mode = None
         skill_source_cell = None
+        iron_bar_edges.clear()
         shadow_empty_cells.clear()
         reset_shield()
 
@@ -1129,11 +1171,11 @@ def main():
             if profession_mode_enabled():
                 for idx, opt_btn in enumerate(custom_profession_buttons):
                     if btn is opt_btn:
-                        selected_profession = PROFESSION_ORDER[idx]
+                        ai_profession = PROFESSION_ORDER[idx]
                         return
                 for idx, opt_btn in enumerate(ai_profession_buttons):
                     if btn is opt_btn:
-                        ai_profession = PROFESSION_ORDER[idx]
+                        selected_profession = PROFESSION_ORDER[idx]
                         return
             for idx, opt_btn in enumerate(first_buttons):
                 if btn is opt_btn:
@@ -1383,6 +1425,44 @@ def main():
         screen.blit(shadow, shadow.get_rect(center=(cx + 1, num_y + 1)))
         screen.blit(label, label.get_rect(center=(cx, num_y)))
 
+    def draw_iron_bar(row_idx, left_idx, centers):
+        if row_idx < 0 or row_idx >= len(centers):
+            return
+        row_centers = centers[row_idx]
+        if left_idx < 0 or left_idx + 1 >= len(row_centers):
+            return
+        left_x, left_y = row_centers[left_idx]
+        right_x, right_y = row_centers[left_idx + 1]
+        dx = right_x - left_x
+        dy = right_y - left_y
+        length = math.hypot(dx, dy)
+        if length <= 0.01:
+            return
+        ux = dx / length
+        uy = dy / length
+        nx = -uy
+        ny = ux
+        mid_x = (left_x + right_x) / 2
+        mid_y = (left_y + right_y) / 2
+        bar_half_len = max(16, int(RADIUS * 1.3))
+        start = (
+            int(mid_x - nx * bar_half_len),
+            int(mid_y - ny * bar_half_len),
+        )
+        end = (
+            int(mid_x + nx * bar_half_len),
+            int(mid_y + ny * bar_half_len),
+        )
+        if iron_bar_icon is not None:
+            edge_angle = math.degrees(math.atan2(dy, dx))
+            bar_angle = edge_angle + 90
+            icon = pygame.transform.rotozoom(iron_bar_icon, -bar_angle, 1.0)
+            icon_rect = icon.get_rect(center=(int(mid_x), int(mid_y)))
+            screen.blit(icon, icon_rect)
+            return
+        pygame.draw.line(screen, (98, 102, 112), start, end, 3)
+        pygame.draw.line(screen, (180, 184, 198), start, end, 1)
+
     def start_slash(row_idx, start_idx, end_idx, actor):
         nonlocal slash_effect, pending_remove
         centers = get_row_centers(rows)
@@ -1498,6 +1578,30 @@ def main():
                                 if not target_hit:
                                     continue
                                 skill_target = (skill_source_cell, target_hit)
+                            elif skill_mode == "inlay_bar":
+                                if skill_source_cell is None:
+                                    source_hit = find_board_cell(rows, event.pos)
+                                    if not source_hit:
+                                        continue
+                                    available = False
+                                    for dest_cell in _inlay_bar_destinations(source_hit):
+                                        edge = iron_bar_edge_from_cells(
+                                            rows,
+                                            source_hit,
+                                            dest_cell,
+                                        )
+                                        if edge is None or edge in iron_bar_edges:
+                                            continue
+                                        available = True
+                                        break
+                                    if not available:
+                                        continue
+                                    skill_source_cell = source_hit
+                                    continue
+                                target_hit = find_board_cell(rows, event.pos)
+                                if not target_hit:
+                                    continue
+                                skill_target = (skill_source_cell, target_hit)
                             else:
                                 hit = find_circle(rows, event.pos)
                                 if not hit:
@@ -1542,7 +1646,10 @@ def main():
                             if hit:
                                 select_row, select_start = hit
                                 select_bounds = get_segment_bounds(
-                                    rows, select_row, select_start
+                                    rows,
+                                    select_row,
+                                    select_start,
+                                    blocked_edges=iron_bar_edges,
                                 )
                                 if select_bounds:
                                     select_touched.add(select_start)
@@ -1564,7 +1671,10 @@ def main():
                                 if hit:
                                     select_row, select_start = hit
                                     select_bounds = get_segment_bounds(
-                                        rows, select_row, select_start
+                                        rows,
+                                        select_row,
+                                        select_start,
+                                        blocked_edges=iron_bar_edges,
                                     )
                                     if select_bounds:
                                         select_touched.add(select_start)
@@ -1577,6 +1687,7 @@ def main():
                                     last_pos,
                                     event.pos,
                                     select_touched,
+                                    blocked_edges=iron_bar_edges,
                                 )
                                 if select_touched:
                                     select_start = min(select_touched)
@@ -1636,6 +1747,7 @@ def main():
                                 shield_states["player"]["piece"],
                                 shield_states["ai"]["piece"],
                             ],
+                            "blocked_edges": iron_bar_edges,
                         },
                     )
                     executed = False
@@ -1684,9 +1796,24 @@ def main():
                         executed = True
 
                     if not executed:
-                        fallback_move = nim_ai_move(rows, difficulty)
-                        if fallback_move:
-                            row_idx, start_idx, end_idx = fallback_move
+                        fallback_action = nim_ai_move(
+                            rows,
+                            difficulty,
+                            ai_context={
+                                "profession_mode": False,
+                                "ai_skill_used": True,
+                                "blocked_edges": iron_bar_edges,
+                            },
+                        )
+                        if isinstance(fallback_action, dict):
+                            if fallback_action.get("type") == "normal":
+                                row_idx = fallback_action.get("row", -1)
+                                start_idx = fallback_action.get("start", -1)
+                                end_idx = fallback_action.get("end", -1)
+                                if 0 <= row_idx < len(rows):
+                                    start_slash(row_idx, start_idx, end_idx, "ai")
+                        elif fallback_action:
+                            row_idx, start_idx, end_idx = fallback_action
                             start_slash(row_idx, start_idx, end_idx, "ai")
 
         if game_state in menu_states:
@@ -1712,6 +1839,7 @@ def main():
             }
             shadow_empty_cells.intersection_update(valid_shadow_empty_cells)
             shadow_hand_targets = set()
+            inlay_bar_targets = set()
             shadow_virtual_positions = {}
             if skill_mode == "shadow_hand" and skill_source_cell is not None:
                 shadow_hand_targets = set(
@@ -1720,6 +1848,12 @@ def main():
                 for row_idx, idx, x, y in _shadow_virtual_targets():
                     if (row_idx, idx) in shadow_hand_targets:
                         shadow_virtual_positions[(row_idx, idx)] = (x, y)
+            if skill_mode == "inlay_bar" and skill_source_cell is not None:
+                for dest_cell in _inlay_bar_destinations(skill_source_cell):
+                    edge = iron_bar_edge_from_cells(rows, skill_source_cell, dest_cell)
+                    if edge is None or edge in iron_bar_edges:
+                        continue
+                    inlay_bar_targets.add(dest_cell)
             for row_idx, row in enumerate(centers):
                 for idx, (x, y) in enumerate(row):
                     selected = False
@@ -1733,11 +1867,14 @@ def main():
                         hi = max(select_start, select_end)
                         selected = lo <= idx <= hi
                     if (
-                        skill_mode == "shadow_hand"
+                        skill_mode in ("shadow_hand", "inlay_bar")
                         and skill_source_cell == (row_idx, idx)
                     ):
                         selected = True
-                    target_highlight = (row_idx, idx) in shadow_hand_targets
+                    target_highlight = (
+                        (row_idx, idx) in shadow_hand_targets
+                        or (row_idx, idx) in inlay_bar_targets
+                    )
                     if target_highlight:
                         draw_selection_glow((int(x), int(y)), RADIUS)
 
@@ -1809,6 +1946,8 @@ def main():
                                 (int(x + RADIUS * 0.5), int(y - 6)),
                                 2,
                             )
+            for bar_row, bar_left in sorted(iron_bar_edges):
+                draw_iron_bar(bar_row, bar_left, centers)
             for _target_cell, (x, y) in shadow_virtual_positions.items():
                 draw_selection_glow((int(x), int(y)), RADIUS)
                 pygame.draw.circle(screen, CIRCLE_HL, (int(x), int(y)), RADIUS, 2)
@@ -1957,6 +2096,11 @@ def main():
                             "\u68cb\u4f4d\u4ea4\u6362\uff0c\u6216\u70b9\u9ad8\u4eae\u7684"
                             "\u65b0\u589e\u69fd\u4f4d"
                         )
+                elif skill_mode == "inlay_bar":
+                    if skill_source_cell is None:
+                        hint_text = "嵌条模式：先选择一个棋位作为起点"
+                    else:
+                        hint_text = "嵌条模式：再点同排相邻棋位，在两者间放下铁条"
                 hint_w, hint_h = small_font.size(hint_text)
                 hint_x = right_anchor - hint_w
                 hint_y = info_rect.y + pad + (font.get_height() - hint_h) // 2
@@ -2091,9 +2235,9 @@ def main():
                     pressed=is_button_pressed(btn),
                 )
             if profession_mode_enabled():
-                draw_menu_text("AI职业", label_font, (left_x, custom_ai_prof_label_y))
+                draw_menu_text("玩家职业", label_font, (left_x, custom_ai_prof_label_y))
                 for idx, btn in enumerate(ai_profession_buttons):
-                    selected = ai_profession == PROFESSION_ORDER[idx]
+                    selected = selected_profession == PROFESSION_ORDER[idx]
                     btn.draw(
                         screen,
                         button_font,
@@ -2101,9 +2245,9 @@ def main():
                         palette=MENU_BUTTON_PALETTE,
                         pressed=is_button_pressed(btn),
                     )
-                draw_menu_text("玩家职业", label_font, (right_x, custom_prof_label_y))
+                draw_menu_text("AI职业", label_font, (right_x, custom_prof_label_y))
                 for idx, btn in enumerate(custom_profession_buttons):
-                    selected = selected_profession == PROFESSION_ORDER[idx]
+                    selected = ai_profession == PROFESSION_ORDER[idx]
                     btn.draw(
                         screen,
                         button_font,

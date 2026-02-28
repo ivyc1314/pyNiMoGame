@@ -10,7 +10,7 @@ class ProfessionDef:
     icon_stem: str
 
 
-_PROFESSION_ORDER = ("paladin", "swordsman", "thief")
+_PROFESSION_ORDER = ("paladin", "swordsman", "thief", "blacksmith")
 _DEFAULT_PROFESSION = "paladin"
 _PROFESSION_REGISTRY: dict[str, ProfessionDef] = {
     "paladin": ProfessionDef(
@@ -45,6 +45,17 @@ _PROFESSION_REGISTRY: dict[str, ProfessionDef] = {
         ),
         skill_id="shadow_hand",
         icon_stem="\u76d7\u8d3c\u6807\u5fd7",
+    ),
+    "blacksmith": ProfessionDef(
+        id="blacksmith",
+        label="\u94c1\u5320",
+        intro_lines=(
+            "\u5b9a\u4f4d\uff1a\u533a\u57df\u5c01\u9501",
+            "\u6280\u80fd\u3010\u5d4c\u6761\u3011\uff1a\u53ef\u5728\u540c\u6392\u76f8\u90bb\u4e24\u683c\u95f4\u843d\u4e0b\u94c1\u6761",
+            "\u94c1\u6761\u5728\u672c\u5c40\u6c38\u4e45\u5b58\u5728\uff0c\u963b\u6b62\u4efb\u4f55\u8de8\u8d8a\u94c1\u6761\u7684\u65a9\u51fb",
+        ),
+        skill_id="inlay_bar",
+        icon_stem="\u5de5\u7a0b\u5e08\u56fe\u6807",
     ),
 }
 

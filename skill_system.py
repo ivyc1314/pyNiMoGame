@@ -7,6 +7,8 @@ Cell = tuple[int, int]
 SkillTarget = Cell | tuple[Cell, Cell]
 BoardUpdate = tuple[Cell, bool]
 ShieldState = dict[str, dict[str, object]]
+IronBarEdge = tuple[int, int]
+IronBarState = set[IronBarEdge]
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,7 @@ class SkillUseContext:
     rows: list[list[bool]]
     actor: str
     shield_states: ShieldState
+    iron_bar_edges: IronBarState
 
 
 @dataclass(frozen=True)
@@ -118,16 +121,53 @@ def update_shield_states_after_action(
                 reset_shield(shield_states, owner)
 
 
+def normalize_iron_bar_edge(row_idx: int, left_idx: int) -> IronBarEdge:
+    return int(row_idx), int(left_idx)
+
+
+def iron_bar_edge_from_cells(
+    rows: list[list[bool]], source_cell: Cell, dest_cell: Cell
+) -> IronBarEdge | None:
+    source_row, source_idx = source_cell
+    dest_row, dest_idx = dest_cell
+    if source_row != dest_row:
+        return None
+    if abs(source_idx - dest_idx) != 1:
+        return None
+    row_idx = source_row
+    left_idx = min(source_idx, dest_idx)
+    if not _in_bounds(rows, row_idx, left_idx):
+        return None
+    if not _in_bounds(rows, row_idx, left_idx + 1):
+        return None
+    return normalize_iron_bar_edge(row_idx, left_idx)
+
+
+def edge_blocked(
+    blocked_edges: IronBarState | None, row_idx: int, left_idx: int
+) -> bool:
+    if not blocked_edges:
+        return False
+    return normalize_iron_bar_edge(row_idx, left_idx) in blocked_edges
+
+
 def cross_targets(
-    rows: list[list[bool]], center_row: int, center_idx: int
+    rows: list[list[bool]],
+    center_row: int,
+    center_idx: int,
+    blocked_edges: IronBarState | None = None,
 ) -> tuple[list[Cell], list[Cell]]:
-    candidates = [
-        (center_row, center_idx),
-        (center_row, center_idx - 1),
-        (center_row, center_idx + 1),
-        (center_row - 1, center_idx),
-        (center_row + 1, center_idx),
-    ]
+    candidates = [(center_row, center_idx)]
+    if not edge_blocked(blocked_edges, center_row, center_idx - 1):
+        candidates.append((center_row, center_idx - 1))
+    if not edge_blocked(blocked_edges, center_row, center_idx):
+        candidates.append((center_row, center_idx + 1))
+    candidates.extend(
+        [
+            (center_row - 1, center_idx),
+            (center_row + 1, center_idx),
+        ]
+    )
     fx_cells: list[Cell] = []
     hit_cells: list[Cell] = []
     for row_idx, idx in candidates:
@@ -229,7 +269,12 @@ class CrossSkillHandler:
             return SkillPreview(False, [], [], "out_of_bounds")
         if not rows[row_idx][idx]:
             return SkillPreview(False, [], [], "inactive_piece")
-        hit_cells, fx_cells = cross_targets(rows, row_idx, idx)
+        hit_cells, fx_cells = cross_targets(
+            rows,
+            row_idx,
+            idx,
+            context.iron_bar_edges,
+        )
         if not fx_cells:
             return SkillPreview(False, [], [], "no_target")
         return SkillPreview(True, hit_cells, fx_cells)
@@ -286,6 +331,38 @@ class ShadowHandSkillHandler:
         )
 
 
+class InlayBarSkillHandler:
+    def preview(self, context: SkillUseContext, target: SkillTarget) -> SkillPreview:
+        move_target = _move_target(target)
+        if move_target is None:
+            return SkillPreview(False, [], [], "invalid_target")
+        source_cell, dest_cell = move_target
+        source_row, source_idx = source_cell
+        dest_row, dest_idx = dest_cell
+        rows = context.rows
+        if not _in_bounds(rows, source_row, source_idx):
+            return SkillPreview(False, [], [], "source_out_of_bounds")
+        if not _in_bounds(rows, dest_row, dest_idx):
+            return SkillPreview(False, [], [], "target_out_of_bounds")
+        bar_edge = iron_bar_edge_from_cells(rows, source_cell, dest_cell)
+        if bar_edge is None:
+            return SkillPreview(False, [], [], "target_not_adjacent")
+        if bar_edge in context.iron_bar_edges:
+            return SkillPreview(False, [], [], "already_exists")
+        return SkillPreview(True, [], [source_cell, dest_cell])
+
+    def execute(self, context: SkillUseContext, target: SkillTarget) -> SkillExecution:
+        preview = self.preview(context, target)
+        if not preview.valid:
+            return SkillExecution(False, False, [], [], preview.reason)
+        source_cell, dest_cell = _move_target(target) or ((0, 0), (0, 0))
+        bar_edge = iron_bar_edge_from_cells(context.rows, source_cell, dest_cell)
+        if bar_edge is None:
+            return SkillExecution(False, False, [], [], "target_not_adjacent")
+        context.iron_bar_edges.add(bar_edge)
+        return SkillExecution(True, False, [], preview.fx_cells)
+
+
 _SKILL_DEFS: dict[str, SkillDef] = {
     "shield": SkillDef(id="shield", name="\u5723\u76fe", mode="shield"),
     "cross": SkillDef(id="cross", name="\u5341\u5b57\u65a9", mode="cross"),
@@ -294,11 +371,17 @@ _SKILL_DEFS: dict[str, SkillDef] = {
         name="\u6697\u624b",
         mode="shadow_hand",
     ),
+    "inlay_bar": SkillDef(
+        id="inlay_bar",
+        name="\u5d4c\u6761",
+        mode="inlay_bar",
+    ),
 }
 _SKILL_HANDLERS: dict[str, SkillHandler] = {
     "shield": ShieldSkillHandler(),
     "cross": CrossSkillHandler(),
     "shadow_hand": ShadowHandSkillHandler(),
+    "inlay_bar": InlayBarSkillHandler(),
 }
 
 
