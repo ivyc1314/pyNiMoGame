@@ -19,6 +19,7 @@ from ui_components import (
     SlashEffect,
     build_background,
     draw_slash_trail,
+    generate_button_click_sound,
     generate_slash_sound,
 )
 
@@ -274,6 +275,7 @@ def main():
             ]
 
     slash_sound = None
+    button_click_sound = None
     mixer_ready = False
     music_tracks = []
     music_lengths = []
@@ -377,6 +379,11 @@ def main():
             slash_sound = generate_slash_sound()
         except pygame.error:
             slash_sound = None
+        try:
+            button_click_sound = generate_button_click_sound()
+            button_click_sound.set_volume(0.45)
+        except pygame.error:
+            button_click_sound = None
 
         music_tracks = discover_music_tracks()
         for track_path in music_tracks:
@@ -412,6 +419,7 @@ def main():
     slash_points = []
     last_pos = None
     cancel_hover = False
+    pressed_button = None
     intro_timer = 0.0
 
     slash_effect = None
@@ -596,7 +604,7 @@ def main():
 
     def return_to_menu():
         nonlocal game_state, quick_mode, game_number, match_wins, match_removed
-        nonlocal game1_first, game2_first, ai_timer, intro_timer
+        nonlocal game1_first, game2_first, ai_timer, intro_timer, pressed_button
         clear_round_state()
         quick_mode = False
         game_number = 1
@@ -606,7 +614,130 @@ def main():
         game2_first = None
         ai_timer = 0.0
         intro_timer = 0.0
+        pressed_button = None
         game_state = "main_menu"
+
+    def find_button_at(pos):
+        if game_state == "main_menu":
+            for btn in main_buttons:
+                if btn.hit(pos):
+                    return btn
+        elif game_state == "single_menu":
+            for btn in single_buttons:
+                if btn.hit(pos):
+                    return btn
+            if back_button.hit(pos):
+                return back_button
+        elif game_state == "quick_menu":
+            for btn in difficulty_buttons:
+                if btn.hit(pos):
+                    return btn
+            if start_button.hit(pos):
+                return start_button
+            if back_button.hit(pos):
+                return back_button
+        elif game_state == "custom_menu":
+            for btn in difficulty_buttons:
+                if btn.hit(pos):
+                    return btn
+            for btn in first_buttons:
+                if btn.hit(pos):
+                    return btn
+            for btn in match_buttons:
+                if btn.hit(pos):
+                    return btn
+            if start_button.hit(pos):
+                return start_button
+            if back_button.hit(pos):
+                return back_button
+        elif game_state == "rules":
+            if back_button.hit(pos):
+                return back_button
+        elif game_state in ("playing", "round_intro"):
+            if exit_button.hit(pos):
+                return exit_button
+        elif game_state == "gameover":
+            if match_complete():
+                if menu_button.hit(pos):
+                    return menu_button
+                if restart_button.hit(pos):
+                    return restart_button
+            elif next_button.hit(pos):
+                return next_button
+        return None
+
+    def handle_button_click(btn):
+        nonlocal game_state, difficulty, first_player, match_mode
+        if game_state == "main_menu":
+            if btn is main_buttons[0]:
+                game_state = "single_menu"
+            elif btn is main_buttons[1]:
+                game_state = "rules"
+            return
+        if game_state == "single_menu":
+            if btn is single_buttons[0]:
+                game_state = "quick_menu"
+            elif btn is single_buttons[1]:
+                game_state = "custom_menu"
+            elif btn is back_button:
+                game_state = "main_menu"
+            return
+        if game_state == "quick_menu":
+            for idx, opt_btn in enumerate(difficulty_buttons):
+                if btn is opt_btn:
+                    difficulty = ["random", "medium", "optimal"][idx]
+                    return
+            if btn is start_button:
+                start_match("best3", quick=True)
+            elif btn is back_button:
+                game_state = "single_menu"
+            return
+        if game_state == "custom_menu":
+            for idx, opt_btn in enumerate(difficulty_buttons):
+                if btn is opt_btn:
+                    difficulty = ["random", "medium", "optimal"][idx]
+                    return
+            for idx, opt_btn in enumerate(first_buttons):
+                if btn is opt_btn:
+                    first_player = ["player", "ai"][idx]
+                    return
+            for idx, opt_btn in enumerate(match_buttons):
+                if btn is opt_btn:
+                    match_mode = ["single", "best3"][idx]
+                    return
+            if btn is start_button:
+                start_match(match_mode, quick=False)
+            elif btn is back_button:
+                game_state = "single_menu"
+            return
+        if game_state == "rules":
+            if btn is back_button:
+                game_state = "main_menu"
+            return
+        if game_state in ("playing", "round_intro"):
+            if btn is exit_button:
+                return_to_menu()
+            return
+        if game_state == "gameover":
+            if match_complete():
+                if btn is menu_button:
+                    return_to_menu()
+                elif btn is restart_button:
+                    if quick_mode:
+                        start_match("best3", quick=True)
+                    elif match_mode == "best3":
+                        start_match("best3", quick=False)
+                    else:
+                        begin_game(first_player)
+            elif btn is next_button:
+                start_next_game()
+
+    def is_button_pressed(btn):
+        if pressed_button is not btn:
+            return False
+        if not pygame.mouse.get_pressed()[0]:
+            return False
+        return btn.hit(pygame.mouse.get_pos())
 
     def draw_panel(title):
         panel_surface = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
@@ -745,52 +876,33 @@ def main():
         dt = clock.tick(FPS) / 1000.0
         update_music()
         menu_fx_time += dt
+        if pressed_button and not pygame.mouse.get_pressed()[0]:
+            pressed_button = None
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if game_state == "main_menu":
-                    if main_buttons[0].hit(event.pos):
-                        game_state = "single_menu"
-                    elif main_buttons[1].hit(event.pos):
-                        game_state = "rules"
-                elif game_state == "single_menu":
-                    if single_buttons[0].hit(event.pos):
-                        game_state = "quick_menu"
-                    elif single_buttons[1].hit(event.pos):
-                        game_state = "custom_menu"
-                    elif back_button.hit(event.pos):
-                        game_state = "main_menu"
-                elif game_state == "quick_menu":
-                    for idx, btn in enumerate(difficulty_buttons):
-                        if btn.hit(event.pos):
-                            difficulty = ["random", "medium", "optimal"][idx]
-                    if start_button.hit(event.pos):
-                        start_match("best3", quick=True)
-                    elif back_button.hit(event.pos):
-                        game_state = "single_menu"
-                elif game_state == "custom_menu":
-                    for idx, btn in enumerate(difficulty_buttons):
-                        if btn.hit(event.pos):
-                            difficulty = ["random", "medium", "optimal"][idx]
-                    for idx, btn in enumerate(first_buttons):
-                        if btn.hit(event.pos):
-                            first_player = ["player", "ai"][idx]
-                    for idx, btn in enumerate(match_buttons):
-                        if btn.hit(event.pos):
-                            match_mode = ["single", "best3"][idx]
-                    if start_button.hit(event.pos):
-                        start_match(match_mode, quick=False)
-                    elif back_button.hit(event.pos):
-                        game_state = "single_menu"
-                elif game_state == "rules":
-                    if back_button.hit(event.pos):
-                        game_state = "main_menu"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                btn = find_button_at(event.pos)
+                if btn is not None:
+                    pressed_button = btn
+                    continue
+
+            if (
+                event.type == pygame.MOUSEBUTTONUP
+                and event.button == 1
+                and pressed_button is not None
+            ):
+                if pressed_button.hit(event.pos) and find_button_at(event.pos) is pressed_button:
+                    if button_click_sound:
+                        button_click_sound.play()
+                    handle_button_click(pressed_button)
+                pressed_button = None
+                continue
 
             if game_state == "playing":
                 if current_player == "player" and not slash_effect:
-                    if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         selecting = True
                         select_row = None
                         select_start = None
@@ -843,7 +955,7 @@ def main():
                                 select_start = min(select_touched)
                                 select_end = max(select_touched)
                         last_pos = event.pos
-                    elif event.type == pygame.MOUSEBUTTONUP and selecting:
+                    elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and selecting:
                         selecting = False
                         last_pos = None
                         slash_points = []
@@ -862,24 +974,6 @@ def main():
                             select_bounds = None
                             select_touched = set()
                             cancel_hover = False
-
-            if event.type == pygame.MOUSEBUTTONDOWN and game_state in ("playing", "round_intro"):
-                if exit_button.hit(event.pos):
-                    return_to_menu()
-
-            if game_state == "gameover" and event.type == pygame.MOUSEBUTTONDOWN:
-                if match_complete() and menu_button.hit(event.pos):
-                    return_to_menu()
-                elif match_complete():
-                    if restart_button.hit(event.pos):
-                        if quick_mode:
-                            start_match("best3", quick=True)
-                        elif match_mode == "best3":
-                            start_match("best3", quick=False)
-                        else:
-                            begin_game(first_player)
-                elif next_button.hit(event.pos):
-                    start_next_game()
 
         if game_state == "round_intro":
             intro_timer -= dt
@@ -987,6 +1081,7 @@ def main():
                     button_font,
                     selected=False,
                     palette=BATTLE_BUTTON_PALETTE,
+                    pressed=is_button_pressed(exit_button),
                 )
 
             info_rect = pygame.Rect(160, 18, WIDTH - 390, 198)
@@ -1115,13 +1210,28 @@ def main():
         if game_state == "main_menu":
             draw_panel("尼莫游戏")
             for btn in main_buttons:
-                btn.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+                btn.draw(
+                    screen,
+                    button_font,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
 
         if game_state == "single_menu":
             draw_panel("单人游戏")
             for btn in single_buttons:
-                btn.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
-            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+                btn.draw(
+                    screen,
+                    button_font,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
 
         if game_state == "quick_menu":
             draw_panel("快速游戏")
@@ -1133,6 +1243,7 @@ def main():
                     button_font,
                     selected=selected,
                     palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
                 )
             quick_lines = [
                 "三局两胜",
@@ -1150,8 +1261,14 @@ def main():
                 button_font,
                 selected=False,
                 palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(start_button),
             )
-            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
 
         if game_state == "custom_menu":
             draw_panel("自定义对局")
@@ -1163,6 +1280,7 @@ def main():
                     button_font,
                     selected=selected,
                     palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
                 )
 
             draw_menu_text("先手", label_font, (right_x, label_y))
@@ -1173,6 +1291,7 @@ def main():
                     button_font,
                     selected=selected,
                     palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
                 )
 
             draw_menu_text("对局模式", label_font, (right_x, match_label_y))
@@ -1183,6 +1302,7 @@ def main():
                     button_font,
                     selected=selected,
                     palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
                 )
 
             start_button.draw(
@@ -1190,8 +1310,14 @@ def main():
                 button_font,
                 selected=False,
                 palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(start_button),
             )
-            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
 
         if game_state == "rules":
             draw_panel("规则")
@@ -1208,7 +1334,12 @@ def main():
             for line in rules_lines:
                 draw_menu_text(line, small_font, (panel_rect.x + 40, rule_y))
                 rule_y += 28
-            back_button.draw(screen, button_font, palette=MENU_BUTTON_PALETTE)
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
 
         if game_state == "round_intro":
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1267,7 +1398,12 @@ def main():
                     center=True,
                 )
                 restart_button.text = "再开一组赌局"
-                restart_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
+                restart_button.draw(
+                    screen,
+                    button_font,
+                    palette=BATTLE_BUTTON_PALETTE,
+                    pressed=is_button_pressed(restart_button),
+                )
             else:
                 draw_battle_text(
                     f"本盘胜者：{ROLE_LABELS[winner]}",
@@ -1278,14 +1414,27 @@ def main():
                     center=True,
                 )
                 if match_mode == "best3" or quick_mode:
-                    next_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
+                    next_button.draw(
+                        screen,
+                        button_font,
+                        palette=BATTLE_BUTTON_PALETTE,
+                        pressed=is_button_pressed(next_button),
+                    )
                 else:
                     restart_button.text = "再开一盘"
                     restart_button.draw(
-                        screen, button_font, palette=BATTLE_BUTTON_PALETTE
+                        screen,
+                        button_font,
+                        palette=BATTLE_BUTTON_PALETTE,
+                        pressed=is_button_pressed(restart_button),
                     )
             if match_complete():
-                menu_button.draw(screen, button_font, palette=BATTLE_BUTTON_PALETTE)
+                menu_button.draw(
+                    screen,
+                    button_font,
+                    palette=BATTLE_BUTTON_PALETTE,
+                    pressed=is_button_pressed(menu_button),
+                )
 
         pygame.display.flip()
 

@@ -37,12 +37,28 @@ def generate_slash_sound():
     return pygame.mixer.Sound(buffer=data.tobytes())
 
 
+def generate_button_click_sound():
+    sample_rate = 22050
+    duration = 0.08
+    total = int(sample_rate * duration)
+    data = array("h")
+    for i in range(total):
+        t = i / max(total - 1, 1)
+        env = (1.0 - t) ** 3
+        tone1 = math.sin(2 * math.pi * 920 * t) * 5200
+        tone2 = math.sin(2 * math.pi * 1480 * t) * 2600
+        noise = (random.random() * 2.0 - 1.0) * 600
+        value = int((tone1 + tone2 + noise) * env)
+        data.append(clamp(value, -32768, 32767))
+    return pygame.mixer.Sound(buffer=data.tobytes())
+
+
 class Button:
     def __init__(self, rect, text):
         self.rect = pygame.Rect(rect)
         self.text = text
 
-    def draw(self, surface, font, selected=False, palette=None):
+    def draw(self, surface, font, selected=False, palette=None, pressed=False):
         if palette:
             base = palette["base"]
             highlight = palette["highlight"]
@@ -57,12 +73,19 @@ class Button:
             shadow = BTN_SHADOW
 
         color = highlight if selected else base
-        shadow_rect = self.rect.move(2, 3)
+        draw_rect = self.rect.move(0, 2) if pressed else self.rect
+        if pressed:
+            color = tuple(max(0, min(255, int(c * 0.88))) for c in color)
+            if len(shadow) == 4:
+                shadow = (shadow[0], shadow[1], shadow[2], int(shadow[3] * 0.55))
+            else:
+                shadow = tuple(max(0, min(255, int(c * 0.55))) for c in shadow)
+        shadow_rect = draw_rect.move(1, 1 if pressed else 2)
         pygame.draw.rect(surface, shadow, shadow_rect, border_radius=10)
-        pygame.draw.rect(surface, color, self.rect, border_radius=10)
-        pygame.draw.rect(surface, border, self.rect, 2, border_radius=10)
+        pygame.draw.rect(surface, color, draw_rect, border_radius=10)
+        pygame.draw.rect(surface, border, draw_rect, 2, border_radius=10)
         label = font.render(self.text, True, text_color)
-        surface.blit(label, label.get_rect(center=self.rect.center))
+        surface.blit(label, label.get_rect(center=draw_rect.center))
 
     def hit(self, pos):
         return self.rect.collidepoint(pos)
