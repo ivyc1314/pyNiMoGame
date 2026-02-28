@@ -74,6 +74,19 @@ BATTLE_BUTTON_PALETTE = {
     "shadow": (0, 0, 0, 92),
 }
 ROLE_LABELS = {"player": "玩家", "ai": "AI赌徒"}
+PROFESSION_ORDER = ["paladin", "swordsman"]
+PROFESSION_LABELS = {"paladin": "圣骑士", "swordsman": "剑士"}
+PROFESSION_SKILLS = {
+    "paladin": {"name": "圣盾", "mode": "shield"},
+    "swordsman": {"name": "十字斩", "mode": "cross"},
+}
+SHIELD_FILL_COLOR = (216, 170, 74)
+SHIELD_INNER_COLOR = (236, 197, 108)
+SHIELD_EDGE_COLOR = (255, 233, 176)
+SHIELD_HILITE_COLOR = (255, 247, 220)
+SHIELD_CROSS_COLOR = (170, 118, 44)
+CROSS_FX_OFFSET_X = -4
+CROSS_FX_OFFSET_Y = -3
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -398,12 +411,19 @@ def main():
     first_player = "player"
     match_mode = "single"
     quick_mode = False
+    single_mode = "classic"
+    selected_profession = "paladin"
     game_number = 1
     match_wins = {"player": 0, "ai": 0}
     match_removed = {"player": 0, "ai": 0}
     game1_first = None
     game2_first = None
     current_player = "player"
+    skill_used = False
+    skill_mode = None
+    shield_piece = None
+    shield_turns_left = 0
+    shield_turn_action_count = 0
 
     game_state = "main_menu"
     rows = [[True for _ in range(count)] for count in ROW_INIT]
@@ -444,6 +464,7 @@ def main():
     start_btn_y = panel_rect.bottom - 70
     cancel_rect = pygame.Rect(WIDTH - 170, 30, 140, 36)
     exit_button = Button((30, 18, 108, 40), "离席")
+    skill_button = Button((30, 70, 132, 40), "")
 
     main_buttons = [
         Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "单人游戏"),
@@ -453,15 +474,51 @@ def main():
         ),
     ]
     single_buttons = [
-        Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "快速游戏"),
+        Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "经典模式"),
         Button(
             (main_btn_x, main_btn_y + main_btn_h + main_btn_gap, main_btn_w, main_btn_h),
-            "自定义对局",
+            "职业模式",
+        ),
+        Button(
+            (
+                main_btn_x,
+                main_btn_y + (main_btn_h + main_btn_gap) * 2,
+                main_btn_w,
+                main_btn_h,
+            ),
+            "自定义游戏",
         ),
     ]
     difficulty_buttons = [
         Button((left_x, buttons_y + i * (btn_h + btn_gap), btn_w, btn_h), label)
         for i, label in enumerate(["新手", "职业", "大师"])
+    ]
+    profession_label_y = buttons_y + (btn_h + btn_gap) * 3 + 6
+    profession_buttons_y = profession_label_y + label_font.get_height() + 8
+    profession_btn_w = (btn_w - 12) // 2
+    profession_buttons = [
+        Button(
+            (
+                left_x + i * (profession_btn_w + 12),
+                profession_buttons_y,
+                profession_btn_w,
+                btn_h,
+            ),
+            PROFESSION_LABELS[key],
+        )
+        for i, key in enumerate(PROFESSION_ORDER)
+    ]
+    custom_mode_buttons = [
+        Button(
+            (
+                left_x + i * (profession_btn_w + 12),
+                profession_buttons_y,
+                profession_btn_w,
+                btn_h,
+            ),
+            label,
+        )
+        for i, label in enumerate(["经典", "职业"])
     ]
     first_buttons = [
         Button((right_x, buttons_y + i * (btn_h + btn_gap), btn_w, btn_h), label)
@@ -482,6 +539,23 @@ def main():
             "三局两胜",
         ),
     ]
+    custom_prof_label_y = match_buttons_y + btn_h + 12
+    custom_prof_buttons_y = custom_prof_label_y + label_font.get_height() + 8
+    if custom_prof_buttons_y + btn_h > start_btn_y - 8:
+        custom_prof_buttons_y = start_btn_y - btn_h - 8
+        custom_prof_label_y = custom_prof_buttons_y - label_font.get_height() - 8
+    custom_profession_buttons = [
+        Button(
+            (
+                right_x + i * (profession_btn_w + 12),
+                custom_prof_buttons_y,
+                profession_btn_w,
+                btn_h,
+            ),
+            PROFESSION_LABELS[key],
+        )
+        for i, key in enumerate(PROFESSION_ORDER)
+    ]
     start_button = Button(
         (panel_rect.centerx - 120, start_btn_y, 240, 56), "开始游戏"
     )
@@ -496,6 +570,55 @@ def main():
         if difficulty == "medium":
             return "职业"
         return "大师"
+
+    def profession_text():
+        return PROFESSION_LABELS.get(selected_profession, "圣骑士")
+
+    def profession_mode_enabled():
+        return single_mode == "profession"
+
+    def skill_name():
+        return PROFESSION_SKILLS[selected_profession]["name"]
+
+    def skill_button_text():
+        if skill_mode is not None:
+            return f"取消{skill_name()}"
+        if skill_used:
+            return f"{skill_name()}(已用)"
+        return skill_name()
+
+    def clear_player_selection():
+        nonlocal selecting, select_row, select_start, select_end
+        nonlocal select_bounds, select_touched, slash_points, last_pos, cancel_hover
+        selecting = False
+        select_row = None
+        select_start = None
+        select_end = None
+        select_bounds = None
+        select_touched = set()
+        slash_points = []
+        last_pos = None
+        cancel_hover = False
+
+    def cross_slash_targets(center_row, center_idx):
+        candidates = [
+            (center_row, center_idx),
+            (center_row, center_idx - 1),
+            (center_row, center_idx + 1),
+            (center_row - 1, center_idx),
+            (center_row + 1, center_idx),
+        ]
+        fx_cells = []
+        hit_cells = []
+        for row_idx, idx in candidates:
+            if row_idx < 0 or row_idx >= len(rows):
+                continue
+            if idx < 0 or idx >= len(rows[row_idx]):
+                continue
+            fx_cells.append((row_idx, idx))
+            if rows[row_idx][idx]:
+                hit_cells.append((row_idx, idx))
+        return hit_cells, fx_cells
 
     def generate_rows():
         while True:
@@ -518,30 +641,31 @@ def main():
         ]
 
     def clear_round_state():
-        nonlocal winner, selecting, select_row, select_start, select_end
-        nonlocal select_bounds, select_touched, slash_points, last_pos, cancel_hover
-        nonlocal slash_effect, pending_remove
+        nonlocal winner, slash_effect, pending_remove, skill_mode, shield_turns_left
+        nonlocal shield_turn_action_count
         winner = None
-        selecting = False
-        select_row = None
-        select_start = None
-        select_end = None
-        select_bounds = None
-        select_touched = set()
-        slash_points = []
-        last_pos = None
-        cancel_hover = False
+        clear_player_selection()
         slash_effect = None
         pending_remove = None
+        skill_mode = None
+        shield_turns_left = 0
+        shield_turn_action_count = 0
 
     def begin_game(first):
         nonlocal rows, current_player, game_state, ai_timer, intro_timer
+        nonlocal skill_used, shield_piece, shield_turns_left, skill_mode
+        nonlocal shield_turn_action_count
         if match_mode == "best3" or quick_mode:
             rows = [[True for _ in range(c)] for c in generate_rows()]
         else:
             rows = [[True for _ in range(c)] for c in ROW_INIT]
         reset_piece_icon_map()
         clear_round_state()
+        skill_used = False
+        shield_piece = None
+        shield_turns_left = 0
+        shield_turn_action_count = 0
+        skill_mode = None
         current_player = first
         if match_mode == "best3" or quick_mode:
             intro_timer = 1.6
@@ -605,6 +729,8 @@ def main():
     def return_to_menu():
         nonlocal game_state, quick_mode, game_number, match_wins, match_removed
         nonlocal game1_first, game2_first, ai_timer, intro_timer, pressed_button
+        nonlocal skill_used, shield_piece, shield_turns_left, skill_mode
+        nonlocal shield_turn_action_count
         clear_round_state()
         quick_mode = False
         game_number = 1
@@ -615,6 +741,11 @@ def main():
         ai_timer = 0.0
         intro_timer = 0.0
         pressed_button = None
+        skill_used = False
+        shield_piece = None
+        shield_turns_left = 0
+        shield_turn_action_count = 0
+        skill_mode = None
         game_state = "main_menu"
 
     def find_button_at(pos):
@@ -632,6 +763,10 @@ def main():
             for btn in difficulty_buttons:
                 if btn.hit(pos):
                     return btn
+            if profession_mode_enabled():
+                for btn in profession_buttons:
+                    if btn.hit(pos):
+                        return btn
             if start_button.hit(pos):
                 return start_button
             if back_button.hit(pos):
@@ -640,6 +775,13 @@ def main():
             for btn in difficulty_buttons:
                 if btn.hit(pos):
                     return btn
+            for btn in custom_mode_buttons:
+                if btn.hit(pos):
+                    return btn
+            if profession_mode_enabled():
+                for btn in custom_profession_buttons:
+                    if btn.hit(pos):
+                        return btn
             for btn in first_buttons:
                 if btn.hit(pos):
                     return btn
@@ -654,6 +796,14 @@ def main():
             if back_button.hit(pos):
                 return back_button
         elif game_state in ("playing", "round_intro"):
+            if (
+                game_state == "playing"
+                and profession_mode_enabled()
+                and current_player == "player"
+                and not slash_effect
+                and skill_button.hit(pos)
+            ):
+                return skill_button
             if exit_button.hit(pos):
                 return exit_button
         elif game_state == "gameover":
@@ -668,6 +818,7 @@ def main():
 
     def handle_button_click(btn):
         nonlocal game_state, difficulty, first_player, match_mode
+        nonlocal selected_profession, skill_mode, single_mode
         if game_state == "main_menu":
             if btn is main_buttons[0]:
                 game_state = "single_menu"
@@ -676,8 +827,13 @@ def main():
             return
         if game_state == "single_menu":
             if btn is single_buttons[0]:
+                single_mode = "classic"
                 game_state = "quick_menu"
             elif btn is single_buttons[1]:
+                single_mode = "profession"
+                game_state = "quick_menu"
+            elif btn is single_buttons[2]:
+                single_mode = "classic"
                 game_state = "custom_menu"
             elif btn is back_button:
                 game_state = "main_menu"
@@ -687,8 +843,14 @@ def main():
                 if btn is opt_btn:
                     difficulty = ["random", "medium", "optimal"][idx]
                     return
+            if profession_mode_enabled():
+                for idx, opt_btn in enumerate(profession_buttons):
+                    if btn is opt_btn:
+                        selected_profession = PROFESSION_ORDER[idx]
+                        return
             if btn is start_button:
-                start_match("best3", quick=True)
+                first_player = "player"
+                start_match("best3", quick=False)
             elif btn is back_button:
                 game_state = "single_menu"
             return
@@ -697,6 +859,16 @@ def main():
                 if btn is opt_btn:
                     difficulty = ["random", "medium", "optimal"][idx]
                     return
+            for idx, opt_btn in enumerate(custom_mode_buttons):
+                if btn is opt_btn:
+                    single_mode = ["classic", "profession"][idx]
+                    skill_mode = None
+                    return
+            if profession_mode_enabled():
+                for idx, opt_btn in enumerate(custom_profession_buttons):
+                    if btn is opt_btn:
+                        selected_profession = PROFESSION_ORDER[idx]
+                        return
             for idx, opt_btn in enumerate(first_buttons):
                 if btn is opt_btn:
                     first_player = ["player", "ai"][idx]
@@ -715,6 +887,20 @@ def main():
                 game_state = "main_menu"
             return
         if game_state in ("playing", "round_intro"):
+            if btn is skill_button and game_state == "playing":
+                if not profession_mode_enabled():
+                    return
+                if current_player != "player" or slash_effect:
+                    return
+                if skill_mode is not None:
+                    skill_mode = None
+                    clear_player_selection()
+                    return
+                if skill_used:
+                    return
+                skill_mode = PROFESSION_SKILLS[selected_profession]["mode"]
+                clear_player_selection()
+                return
             if btn is exit_button:
                 return_to_menu()
             return
@@ -836,6 +1022,66 @@ def main():
         pygame.draw.circle(fx, (*SELECT_GLOW_COLOR, SELECT_GLOW_ALPHA), (c, c), glow_r)
         screen.blit(fx, (center[0] - c, center[1] - c))
 
+    def draw_shield_marker(center, piece_r, turns_left):
+        if turns_left <= 0:
+            return
+        cx, cy = center
+        shield_r = max(16, int(piece_r * 1.12))
+        pad = 4
+        surf_w = (shield_r + pad) * 2
+        surf_h = (shield_r + pad) * 2
+        fx = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
+        marker_alpha = 255 if turns_left >= 2 else 140
+
+        sx = surf_w // 2
+        sy = surf_h // 2
+        pygame.draw.circle(fx, (*SHIELD_FILL_COLOR, 222), (sx, sy), shield_r)
+        pygame.draw.circle(
+            fx,
+            (*SHIELD_INNER_COLOR, 205),
+            (sx, sy),
+            max(8, shield_r - 4),
+        )
+        pygame.draw.circle(fx, SHIELD_EDGE_COLOR, (sx, sy), shield_r, 3)
+        pygame.draw.circle(fx, SHIELD_HILITE_COLOR, (sx, sy), max(7, shield_r - 7), 1)
+
+        glint_r = max(2, shield_r // 5)
+        pygame.draw.circle(
+            fx,
+            (*SHIELD_HILITE_COLOR, 210),
+            (sx - max(3, shield_r // 3), sy - max(3, shield_r // 3)),
+            glint_r,
+        )
+
+        cross_len = max(9, int(shield_r * 0.95))
+        cross_half = cross_len // 2
+        cross_thick = max(2, int(shield_r * 0.24))
+        pygame.draw.line(
+            fx,
+            SHIELD_CROSS_COLOR,
+            (sx, sy - cross_half),
+            (sx, sy + cross_half),
+            cross_thick,
+        )
+        pygame.draw.line(
+            fx,
+            SHIELD_CROSS_COLOR,
+            (sx - cross_half, sy),
+            (sx + cross_half, sy),
+            cross_thick,
+        )
+        fx.set_alpha(marker_alpha)
+        screen.blit(fx, (cx - surf_w // 2, cy - surf_h // 2))
+
+        turn_text = str(turns_left)
+        num_y = cy - shield_r - small_font.get_height() // 2 - 3
+        shadow = small_font.render(turn_text, True, (18, 12, 8))
+        label = small_font.render(turn_text, True, (255, 245, 216))
+        shadow.set_alpha(marker_alpha)
+        label.set_alpha(marker_alpha)
+        screen.blit(shadow, shadow.get_rect(center=(cx + 1, num_y + 1)))
+        screen.blit(label, label.get_rect(center=(cx, num_y)))
+
     def start_slash(row_idx, start_idx, end_idx, actor):
         nonlocal slash_effect, pending_remove
         centers = get_row_centers(rows)
@@ -845,18 +1091,80 @@ def main():
         hi = max(start_idx, end_idx)
         positions = centers[row_idx][lo : hi + 1]
         slash_effect = SlashEffect(positions)
-        pending_remove = (row_idx, lo, hi, actor)
+        pending_remove = {
+            "actor": actor,
+            "cells": [(row_idx, idx) for idx in range(lo, hi + 1)],
+        }
         if slash_sound:
             slash_sound.play()
 
+    def start_skill_slash(hit_cells, fx_cells, actor):
+        nonlocal slash_effect, pending_remove
+        if not fx_cells:
+            return False
+        centers = get_row_centers(rows)
+        fx_positions = [
+            (
+                centers[row_idx][idx][0] + CROSS_FX_OFFSET_X,
+                centers[row_idx][idx][1] + CROSS_FX_OFFSET_Y,
+            )
+            for row_idx, idx in fx_cells
+            if 0 <= row_idx < len(centers) and 0 <= idx < len(centers[row_idx])
+        ]
+        if not fx_positions:
+            return False
+        slash_effect = SlashEffect(fx_positions, style="cross")
+        pending_remove = {"actor": actor, "cells": hit_cells}
+        if slash_sound:
+            slash_sound.play()
+        return True
+
     def apply_pending():
         nonlocal pending_remove, slash_effect, current_player, game_state, winner, ai_timer
+        nonlocal shield_piece, shield_turns_left, shield_turn_action_count
         if not pending_remove:
             return
-        row_idx, lo, hi, actor = pending_remove
-        removed_count = hi - lo + 1
-        for idx in range(lo, hi + 1):
+        actor = pending_remove["actor"]
+        removed_count = 0
+        for row_idx, idx in pending_remove["cells"]:
+            if row_idx < 0 or row_idx >= len(rows):
+                continue
+            if idx < 0 or idx >= len(rows[row_idx]):
+                continue
+            if not rows[row_idx][idx]:
+                continue
+            if shield_piece == (row_idx, idx):
+                shield_piece = None
+                shield_turns_left = 0
+                shield_turn_action_count = 0
+                continue
             rows[row_idx][idx] = False
+            removed_count += 1
+        if shield_piece is not None:
+            shield_row, shield_idx = shield_piece
+            shield_valid = (
+                0 <= shield_row < len(rows)
+                and 0 <= shield_idx < len(rows[shield_row])
+                and rows[shield_row][shield_idx]
+            )
+            if not shield_valid:
+                shield_piece = None
+                shield_turns_left = 0
+                shield_turn_action_count = 0
+            elif shield_turns_left > 0:
+                shield_turn_action_count += 1
+                if shield_turn_action_count >= 2:
+                    shield_turn_action_count = 0
+                    shield_turns_left -= 1
+                    if shield_turns_left <= 0:
+                        shield_piece = None
+                        shield_turns_left = 0
+            else:
+                shield_piece = None
+                shield_turns_left = 0
+                shield_turn_action_count = 0
+        else:
+            shield_turn_action_count = 0
         if quick_mode and game_number <= 2:
             match_removed[actor] += removed_count
         pending_remove = None
@@ -902,38 +1210,37 @@ def main():
 
             if game_state == "playing":
                 if current_player == "player" and not slash_effect:
-                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        selecting = True
-                        select_row = None
-                        select_start = None
-                        select_end = None
-                        select_bounds = None
-                        select_touched = set()
-                        slash_points = [event.pos]
-                        last_pos = event.pos
-                        cancel_hover = False
-
-                        hit = find_circle(rows, event.pos)
-                        if hit:
-                            select_row, select_start = hit
-                            select_bounds = get_segment_bounds(rows, select_row, select_start)
-                            if select_bounds:
-                                select_touched.add(select_start)
-                                select_end = select_start
-                    elif event.type == pygame.MOUSEMOTION and selecting:
-                        if last_pos is None:
+                    if skill_mode is not None:
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            hit = find_circle(rows, event.pos)
+                            if not hit:
+                                continue
+                            row_idx, idx = hit
+                            if skill_mode == "shield":
+                                if rows[row_idx][idx]:
+                                    shield_piece = (row_idx, idx)
+                                    shield_turns_left = 2
+                                    shield_turn_action_count = 0
+                                    skill_used = True
+                                    skill_mode = None
+                            elif skill_mode == "cross":
+                                hit_cells, fx_cells = cross_slash_targets(row_idx, idx)
+                                if start_skill_slash(hit_cells, fx_cells, "player"):
+                                    skill_used = True
+                                    skill_mode = None
+                    else:
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            selecting = True
+                            select_row = None
+                            select_start = None
+                            select_end = None
+                            select_bounds = None
+                            select_touched = set()
+                            slash_points = [event.pos]
                             last_pos = event.pos
-                        slash_points.append(event.pos)
-                        if len(slash_points) > 14:
-                            slash_points.pop(0)
-
-                        if select_row is not None:
-                            cancel_hover = cancel_rect.collidepoint(event.pos)
-                        else:
                             cancel_hover = False
 
-                        if select_row is None:
-                            hit = find_hit_by_segment(rows, last_pos, event.pos)
+                            hit = find_circle(rows, event.pos)
                             if hit:
                                 select_row, select_start = hit
                                 select_bounds = get_segment_bounds(
@@ -942,38 +1249,64 @@ def main():
                                 if select_bounds:
                                     select_touched.add(select_start)
                                     select_end = select_start
-                        if select_row is not None and select_bounds is not None:
-                            update_touched_by_segment(
-                                rows,
-                                select_row,
-                                select_bounds,
-                                last_pos,
-                                event.pos,
-                                select_touched,
-                            )
-                            if select_touched:
-                                select_start = min(select_touched)
-                                select_end = max(select_touched)
-                        last_pos = event.pos
-                    elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and selecting:
-                        selecting = False
-                        last_pos = None
-                        slash_points = []
-                        if cancel_hover:
-                            select_row = None
-                            select_start = None
-                            select_end = None
-                            select_bounds = None
-                            select_touched = set()
-                            cancel_hover = False
-                        elif select_row is not None and select_start is not None:
-                            start_slash(select_row, select_start, select_end, "player")
-                            select_row = None
-                            select_start = None
-                            select_end = None
-                            select_bounds = None
-                            select_touched = set()
-                            cancel_hover = False
+                        elif event.type == pygame.MOUSEMOTION and selecting:
+                            if last_pos is None:
+                                last_pos = event.pos
+                            slash_points.append(event.pos)
+                            if len(slash_points) > 14:
+                                slash_points.pop(0)
+
+                            if select_row is not None:
+                                cancel_hover = cancel_rect.collidepoint(event.pos)
+                            else:
+                                cancel_hover = False
+
+                            if select_row is None:
+                                hit = find_hit_by_segment(rows, last_pos, event.pos)
+                                if hit:
+                                    select_row, select_start = hit
+                                    select_bounds = get_segment_bounds(
+                                        rows, select_row, select_start
+                                    )
+                                    if select_bounds:
+                                        select_touched.add(select_start)
+                                        select_end = select_start
+                            if select_row is not None and select_bounds is not None:
+                                update_touched_by_segment(
+                                    rows,
+                                    select_row,
+                                    select_bounds,
+                                    last_pos,
+                                    event.pos,
+                                    select_touched,
+                                )
+                                if select_touched:
+                                    select_start = min(select_touched)
+                                    select_end = max(select_touched)
+                            last_pos = event.pos
+                        elif (
+                            event.type == pygame.MOUSEBUTTONUP
+                            and event.button == 1
+                            and selecting
+                        ):
+                            selecting = False
+                            last_pos = None
+                            slash_points = []
+                            if cancel_hover:
+                                select_row = None
+                                select_start = None
+                                select_end = None
+                                select_bounds = None
+                                select_touched = set()
+                                cancel_hover = False
+                            elif select_row is not None and select_start is not None:
+                                start_slash(select_row, select_start, select_end, "player")
+                                select_row = None
+                                select_start = None
+                                select_end = None
+                                select_bounds = None
+                                select_touched = set()
+                                cancel_hover = False
 
         if game_state == "round_intro":
             intro_timer -= dt
@@ -1022,6 +1355,7 @@ def main():
                         selected = lo <= idx <= hi
 
                     if rows[row_idx][idx]:
+                        piece_r = RADIUS
                         if battle_piece_icons:
                             icon_idx = (row_idx * len(row) + idx) % len(
                                 battle_piece_icons
@@ -1034,8 +1368,8 @@ def main():
                                     battle_piece_icons
                                 )
                             icon = battle_piece_icons[icon_idx]
+                            piece_r = min(icon.get_width(), icon.get_height()) // 2
                             if selected:
-                                piece_r = min(icon.get_width(), icon.get_height()) // 2
                                 glow_r = max(RADIUS, piece_r - 1)
                                 glow_r = min(glow_r, RADIUS + 5)
                                 left_shift = int(glow_r * 0.4)
@@ -1046,6 +1380,15 @@ def main():
                         else:
                             color = CIRCLE_HL if selected else CIRCLE_COLOR
                             pygame.draw.circle(screen, color, (int(x), int(y)), RADIUS)
+                        if shield_piece == (row_idx, idx):
+                            shield_center = (int(x), int(y))
+                            if battle_piece_icons:
+                                # Keep the shield marker aligned with the same perspective offset as selection glow.
+                                align_r = max(RADIUS, piece_r - 1)
+                                align_r = min(align_r, RADIUS + 5)
+                                left_shift = int(align_r * 0.4)
+                                shield_center = (int(x) - left_shift, int(y))
+                            draw_shield_marker(shield_center, piece_r, shield_turns_left)
                     else:
                         if broken_piece_icons:
                             icon = broken_piece_icons[
@@ -1076,6 +1419,15 @@ def main():
                             )
 
             if game_state == "playing":
+                if profession_mode_enabled():
+                    skill_button.text = skill_button_text()
+                    skill_button.draw(
+                        screen,
+                        button_font,
+                        selected=skill_mode is not None,
+                        palette=BATTLE_BUTTON_PALETTE,
+                        pressed=is_button_pressed(skill_button),
+                    )
                 exit_button.draw(
                     screen,
                     button_font,
@@ -1129,7 +1481,10 @@ def main():
             )
             y += font.get_height() + gap
 
-            diff_text = f"难度：{difficulty_text()}"
+            if profession_mode_enabled():
+                diff_text = f"难度：{difficulty_text()}  职业：{profession_text()}"
+            else:
+                diff_text = f"难度：{difficulty_text()}"
             draw_battle_text(diff_text, font, (info_rect.x + 20, y))
             if quick_mode:
                 removed_line = f"碎子数：玩家{match_removed['player']} - AI赌徒{match_removed['ai']}"
@@ -1175,7 +1530,16 @@ def main():
                 y += small_font.get_height() + gap
 
             if game_state == "playing":
-                hint_text = "沿同一排连划木筹，可一次收走"
+                if not profession_mode_enabled():
+                    hint_text = "经典模式：沿同一排连划棋子，可一次收走连续区间"
+                elif skill_mode == "shield":
+                    hint_text = "圣盾模式：点击一个完整棋子施加护盾"
+                elif skill_mode == "cross":
+                    hint_text = "十字斩模式：点击中心棋子释放技能"
+                elif current_player == "player" and not skill_used:
+                    hint_text = f"可用技能：{skill_name()}"
+                else:
+                    hint_text = "沿同一排连划棋子，可一次收走连续区间"
                 hint_w, hint_h = small_font.size(hint_text)
                 hint_x = right_anchor - hint_w
                 hint_y = info_rect.y + pad + (font.get_height() - hint_h) // 2
@@ -1234,7 +1598,7 @@ def main():
             )
 
         if game_state == "quick_menu":
-            draw_panel("快速游戏")
+            draw_panel("职业模式" if profession_mode_enabled() else "经典模式")
             draw_menu_text("AI难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
                 selected = difficulty == ["random", "medium", "optimal"][idx]
@@ -1245,12 +1609,21 @@ def main():
                     palette=MENU_BUTTON_PALETTE,
                     pressed=is_button_pressed(btn),
                 )
+            if profession_mode_enabled():
+                draw_menu_text("职业", label_font, (left_x, profession_label_y))
+                for idx, btn in enumerate(profession_buttons):
+                    selected = selected_profession == PROFESSION_ORDER[idx]
+                    btn.draw(
+                        screen,
+                        button_font,
+                        selected=selected,
+                        palette=MENU_BUTTON_PALETTE,
+                        pressed=is_button_pressed(btn),
+                    )
             quick_lines = [
-                "三局两胜",
-                "第1局先手随机",
-                "第2局先手交换",
-                "第3局先手：前两局总删除数更少者",
-                "平局：第2局后手先",
+                "默认：三局两胜",
+                "默认：玩家先手",
+                "更多设置请进“自定义游戏”",
             ]
             quick_y = label_y
             for line in quick_lines:
@@ -1271,7 +1644,7 @@ def main():
             )
 
         if game_state == "custom_menu":
-            draw_panel("自定义对局")
+            draw_panel("自定义游戏")
             draw_menu_text("选择难度", label_font, (left_x, label_y))
             for idx, btn in enumerate(difficulty_buttons):
                 selected = difficulty == ["random", "medium", "optimal"][idx]
@@ -1282,6 +1655,27 @@ def main():
                     palette=MENU_BUTTON_PALETTE,
                     pressed=is_button_pressed(btn),
                 )
+            draw_menu_text("玩法", label_font, (left_x, profession_label_y))
+            for idx, btn in enumerate(custom_mode_buttons):
+                selected = single_mode == ["classic", "profession"][idx]
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            if profession_mode_enabled():
+                draw_menu_text("职业", label_font, (right_x, custom_prof_label_y))
+                for idx, btn in enumerate(custom_profession_buttons):
+                    selected = selected_profession == PROFESSION_ORDER[idx]
+                    btn.draw(
+                        screen,
+                        button_font,
+                        selected=selected,
+                        palette=MENU_BUTTON_PALETTE,
+                        pressed=is_button_pressed(btn),
+                    )
 
             draw_menu_text("先手", label_font, (right_x, label_y))
             for idx, btn in enumerate(first_buttons):
@@ -1324,11 +1718,10 @@ def main():
             rules_lines = [
                 "1. 同一横排连续划过即可移除。",
                 "2. 碎裂棋子会阻挡，不能跨越。",
-                "3. 单人模式对AI。",
-                "4. 快速游戏为三局两胜。",
-                "5. 第1局先手随机，第2局先手交换。",
-                "6. 第3局先手：前两局总删除数更少者。",
-                "7. 平局：第2局后手先。",
+                "3. 单人游戏包含：经典模式、职业模式、自定义游戏。",
+                "4. 经典/职业默认三局两胜，默认玩家先手。",
+                "5. 职业模式可用职业技能，每局1次。",
+                "6. 自定义游戏可选玩法、先手、局制等设置。",
             ]
             rule_y = panel_rect.y + 140
             for line in rules_lines:

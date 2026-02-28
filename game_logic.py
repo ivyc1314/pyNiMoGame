@@ -1,5 +1,5 @@
 import random
-from constants import GAP, RADIUS, ROW_SPACING, TOP_Y, WIDTH
+from constants import BOARD_COLS, GAP, RADIUS, ROW_SPACING, TOP_Y, WIDTH
 
 
 def clamp(value, min_v, max_v):
@@ -12,10 +12,10 @@ def point_in_circle(px, py, cx, cy, r):
 
 def get_row_centers(rows):
     centers = []
+    full_width = BOARD_COLS * (RADIUS * 2 + GAP) - GAP
+    start_x = (WIDTH - full_width) / 2
     for i, row in enumerate(rows):
         count = len(row)
-        row_width = count * (RADIUS * 2 + GAP) - GAP
-        start_x = (WIDTH - row_width) / 2
         y = TOP_Y + i * ROW_SPACING
         row_centers = []
         for idx in range(count):

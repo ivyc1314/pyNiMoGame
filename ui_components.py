@@ -92,14 +92,18 @@ class Button:
 
 
 class SlashEffect:
-    def __init__(self, positions, duration=SLASH_DURATION):
+    def __init__(self, positions, duration=SLASH_DURATION, style="line"):
         self.positions = positions
         self.duration = duration
+        self.style = style
         self.elapsed = 0.0
         self.particles = []
         for (x, y) in positions:
             for _ in range(5):
-                angle = random.uniform(-math.pi / 2, math.pi / 2)
+                if style == "cross":
+                    angle = random.uniform(0.0, math.tau)
+                else:
+                    angle = random.uniform(-math.pi / 2, math.pi / 2)
                 speed = random.uniform(80, 180)
                 vx = math.cos(angle) * speed
                 vy = math.sin(angle) * speed - 40
@@ -124,18 +128,49 @@ class SlashEffect:
         alpha = int(255 * (1.0 - progress))
         fx = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
-        first = self.positions[0]
-        last = self.positions[-1]
-        start = (first[0] - RADIUS * 0.6, first[1] - RADIUS * 0.4)
-        end = (last[0] + RADIUS * 0.6, last[1] + RADIUS * 0.4)
-        pygame.draw.line(fx, (255, 230, 210, alpha), start, end, 5)
-        pygame.draw.line(
-            fx,
-            (255, 200, 170, int(alpha * 0.7)),
-            (start[0] + 4, start[1] - 2),
-            (end[0] + 4, end[1] - 2),
-            2,
-        )
+        if self.style == "cross":
+            center_x, center_y = self.positions[0]
+            horizontal = [
+                p for p in self.positions if abs(p[1] - center_y) < 1e-3
+            ]
+            vertical = [p for p in self.positions if abs(p[0] - center_x) < 1e-3]
+            min_x = min(p[0] for p in horizontal)
+            max_x = max(p[0] for p in horizontal)
+            min_y = min(p[1] for p in vertical)
+            max_y = max(p[1] for p in vertical)
+            h_start = (min_x - RADIUS * 0.6, center_y)
+            h_end = (max_x + RADIUS * 0.6, center_y)
+            v_start = (center_x, min_y - RADIUS * 0.6)
+            v_end = (center_x, max_y + RADIUS * 0.6)
+            pygame.draw.line(fx, (255, 230, 210, alpha), h_start, h_end, 5)
+            pygame.draw.line(
+                fx,
+                (255, 200, 170, int(alpha * 0.7)),
+                (h_start[0], h_start[1] - 3),
+                (h_end[0], h_end[1] - 3),
+                2,
+            )
+            pygame.draw.line(fx, (255, 230, 210, alpha), v_start, v_end, 5)
+            pygame.draw.line(
+                fx,
+                (255, 200, 170, int(alpha * 0.7)),
+                (v_start[0] + 3, v_start[1]),
+                (v_end[0] + 3, v_end[1]),
+                2,
+            )
+        else:
+            first = self.positions[0]
+            last = self.positions[-1]
+            start = (first[0] - RADIUS * 0.6, first[1] - RADIUS * 0.4)
+            end = (last[0] + RADIUS * 0.6, last[1] + RADIUS * 0.4)
+            pygame.draw.line(fx, (255, 230, 210, alpha), start, end, 5)
+            pygame.draw.line(
+                fx,
+                (255, 200, 170, int(alpha * 0.7)),
+                (start[0] + 4, start[1] - 2),
+                (end[0] + 4, end[1] - 2),
+                2,
+            )
 
         for x, y, _, _, life in self.particles:
             if life <= 0:
