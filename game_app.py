@@ -96,6 +96,7 @@ BATTLE_BUTTON_PALETTE = {
     "shadow": (0, 0, 0, 92),
 }
 ROLE_LABELS = {"player": "玩家", "ai": "AI赌徒"}
+LOCAL_ROLE_LABELS = {"player": "玩家1", "ai": "玩家2"}
 PROFESSION_ORDER = get_profession_ids()
 SHIELD_FILL_COLOR = (216, 170, 74)
 SHIELD_INNER_COLOR = (236, 197, 108)
@@ -157,7 +158,15 @@ def main():
     bg_surface = None
     bg_clouds = None
     menu_bg = None
-    menu_states = {"main_menu", "single_menu", "quick_menu", "custom_menu", "rules"}
+    menu_states = {
+        "main_menu",
+        "single_menu",
+        "multi_menu",
+        "local_multi_menu",
+        "quick_menu",
+        "custom_menu",
+        "rules",
+    }
     picture_dir = os.path.join(os.path.dirname(__file__), "picture")
     music_dir = os.path.join(os.path.dirname(__file__), "music")
     menu_bg_candidates = []
@@ -456,6 +465,7 @@ def main():
     first_player = "player"
     match_mode = "single"
     quick_mode = False
+    play_mode = "single_ai"
     single_mode = "classic"
     selected_profession = get_default_profession()
     ai_profession = get_default_profession()
@@ -521,6 +531,15 @@ def main():
         Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "单人游戏"),
         Button(
             (main_btn_x, main_btn_y + main_btn_h + main_btn_gap, main_btn_w, main_btn_h),
+            "多人游戏",
+        ),
+        Button(
+            (
+                main_btn_x,
+                main_btn_y + (main_btn_h + main_btn_gap) * 2,
+                main_btn_w,
+                main_btn_h,
+            ),
             "规则",
         ),
     ]
@@ -539,6 +558,9 @@ def main():
             ),
             "自定义游戏",
         ),
+    ]
+    multi_buttons = [
+        Button((main_btn_x, main_btn_y, main_btn_w, main_btn_h), "本地双人"),
     ]
     difficulty_buttons = [
         Button((left_x, buttons_y + i * (btn_h + btn_gap), btn_w, btn_h), label)
@@ -670,6 +692,77 @@ def main():
         )
         for i, key in enumerate(PROFESSION_ORDER)
     ]
+    local_mode_label_y = label_y
+    local_mode_buttons_y = local_mode_label_y + label_font.get_height() + 6
+    local_mode_buttons = [
+        Button(
+            (
+                mode_btn_x(left_x, i),
+                local_mode_buttons_y,
+                mode_btn_w,
+                btn_h,
+            ),
+            label,
+        )
+        for i, label in enumerate(["经典", "职业"])
+    ]
+    local_player1_prof_label_y = local_mode_buttons_y + btn_h + 12
+    local_player1_prof_buttons_y = local_player1_prof_label_y + label_font.get_height() + 6
+    local_player1_prof_buttons = [
+        Button(
+            (
+                profession_btn_x(left_x, i),
+                local_player1_prof_buttons_y,
+                profession_btn_widths[i],
+                btn_h,
+            ),
+            get_profession_label(key),
+        )
+        for i, key in enumerate(PROFESSION_ORDER)
+    ]
+    local_first_label_y = label_y
+    local_first_buttons_y = local_first_label_y + label_font.get_height() + 6
+    local_first_btn_w = mode_btn_w
+    local_first_buttons = [
+        Button(
+            (
+                mode_btn_x(right_x, i),
+                local_first_buttons_y,
+                local_first_btn_w,
+                btn_h,
+            ),
+            label,
+        )
+        for i, label in enumerate(["玩家1先手", "玩家2先手"])
+    ]
+    local_match_label_y = local_first_buttons_y + btn_h + 12
+    local_match_buttons_y = local_match_label_y + label_font.get_height() + 6
+    local_match_buttons = [
+        Button(
+            (
+                mode_btn_x(right_x, i),
+                local_match_buttons_y,
+                mode_btn_w,
+                btn_h,
+            ),
+            label,
+        )
+        for i, label in enumerate(["单局", "三局两胜"])
+    ]
+    local_player2_prof_label_y = local_match_buttons_y + btn_h + 12
+    local_player2_prof_buttons_y = local_player2_prof_label_y + label_font.get_height() + 6
+    local_player2_prof_buttons = [
+        Button(
+            (
+                profession_btn_x(right_x, i),
+                local_player2_prof_buttons_y,
+                profession_btn_widths[i],
+                btn_h,
+            ),
+            get_profession_label(key),
+        )
+        for i, key in enumerate(PROFESSION_ORDER)
+    ]
     custom_menu_raise = 40
     custom_difficulty_label_y -= custom_menu_raise
     custom_mode_label_y -= custom_menu_raise
@@ -729,11 +822,24 @@ def main():
         return get_skill_name(current_skill_id(actor))
 
     def skill_button_text():
+        actor = current_player
         if skill_mode is not None:
-            return f"取消{skill_name()}"
-        if skill_used_by["player"]:
-            return f"{skill_name()}(已用)"
-        return skill_name()
+            return f"取消{skill_name(actor)}"
+        if skill_used_by[actor]:
+            return f"{skill_name(actor)}(已用)"
+        return skill_name(actor)
+
+    def is_local_multiplayer():
+        return play_mode == "local_multi"
+
+    def is_human_turn(actor=None):
+        actor = current_player if actor is None else actor
+        return is_local_multiplayer() or actor == "player"
+
+    def role_label(actor):
+        if is_local_multiplayer():
+            return LOCAL_ROLE_LABELS[actor]
+        return ROLE_LABELS[actor]
 
     def build_skill_context(actor):
         return SkillUseContext(
@@ -845,7 +951,11 @@ def main():
     def switch_turn(actor):
         nonlocal current_player, ai_timer
         current_player = "ai" if actor == "player" else "player"
-        ai_timer = AI_DELAY if current_player == "ai" else 0.0
+        ai_timer = (
+            AI_DELAY
+            if play_mode == "single_ai" and current_player == "ai"
+            else 0.0
+        )
 
     def apply_instant_skill_effect(execution, skill_id, actor):
         nonlocal game_state, winner
@@ -965,7 +1075,11 @@ def main():
             game_state = "round_intro"
         else:
             game_state = "playing"
-        ai_timer = AI_DELAY if current_player == "ai" else 0.0
+        ai_timer = (
+            AI_DELAY
+            if play_mode == "single_ai" and current_player == "ai"
+            else 0.0
+        )
 
     def determine_first(game_index):
         if quick_mode:
@@ -987,17 +1101,22 @@ def main():
             else ("ai" if first_player == "player" else "player")
         )
 
-    def start_match(mode, quick=False):
+    def start_match(mode, quick=False, play_type="single_ai"):
         nonlocal match_mode, quick_mode, game_number, match_wins, match_removed
-        nonlocal game1_first, game2_first, ai_profession
+        nonlocal game1_first, game2_first, ai_profession, play_mode
         match_mode = mode
-        quick_mode = quick
+        play_mode = play_type
+        quick_mode = quick if play_mode == "single_ai" else False
         game_number = 1
         match_wins = {"player": 0, "ai": 0}
         match_removed = {"player": 0, "ai": 0}
         game1_first = None
         game2_first = None
-        if profession_mode_enabled() and auto_random_ai_profession:
+        if (
+            play_mode == "single_ai"
+            and profession_mode_enabled()
+            and auto_random_ai_profession
+        ):
             ai_profession = random.choice(PROFESSION_ORDER)
         first = determine_first(1)
         if quick_mode:
@@ -1024,9 +1143,10 @@ def main():
     def return_to_menu():
         nonlocal game_state, quick_mode, game_number, match_wins, match_removed
         nonlocal game1_first, game2_first, ai_timer, intro_timer, pressed_button
-        nonlocal skill_mode, skill_source_cell, auto_random_ai_profession
+        nonlocal skill_mode, skill_source_cell, auto_random_ai_profession, play_mode
         clear_round_state()
         quick_mode = False
+        play_mode = "single_ai"
         auto_random_ai_profession = False
         game_number = 1
         match_wins = {"player": 0, "ai": 0}
@@ -1052,6 +1172,33 @@ def main():
             for btn in single_buttons:
                 if btn.hit(pos):
                     return btn
+            if back_button.hit(pos):
+                return back_button
+        elif game_state == "multi_menu":
+            for btn in multi_buttons:
+                if btn.hit(pos):
+                    return btn
+            if back_button.hit(pos):
+                return back_button
+        elif game_state == "local_multi_menu":
+            for btn in local_mode_buttons:
+                if btn.hit(pos):
+                    return btn
+            if profession_mode_enabled():
+                for btn in local_player1_prof_buttons:
+                    if btn.hit(pos):
+                        return btn
+                for btn in local_player2_prof_buttons:
+                    if btn.hit(pos):
+                        return btn
+            for btn in local_first_buttons:
+                if btn.hit(pos):
+                    return btn
+            for btn in local_match_buttons:
+                if btn.hit(pos):
+                    return btn
+            if start_button.hit(pos):
+                return start_button
             if back_button.hit(pos):
                 return back_button
         elif game_state == "quick_menu":
@@ -1097,7 +1244,7 @@ def main():
             if (
                 game_state == "playing"
                 and profession_mode_enabled()
-                and current_player == "player"
+                and is_human_turn()
                 and not slash_effect
                 and skill_button.hit(pos)
             ):
@@ -1117,11 +1264,13 @@ def main():
     def handle_button_click(btn):
         nonlocal game_state, difficulty, first_player, match_mode
         nonlocal selected_profession, ai_profession, skill_mode, skill_source_cell, single_mode
-        nonlocal auto_random_ai_profession
+        nonlocal auto_random_ai_profession, play_mode
         if game_state == "main_menu":
             if btn is main_buttons[0]:
                 game_state = "single_menu"
             elif btn is main_buttons[1]:
+                game_state = "multi_menu"
+            elif btn is main_buttons[2]:
                 game_state = "rules"
             return
         if game_state == "single_menu":
@@ -1140,6 +1289,49 @@ def main():
             elif btn is back_button:
                 game_state = "main_menu"
             return
+        if game_state == "multi_menu":
+            if btn is multi_buttons[0]:
+                play_mode = "local_multi"
+                single_mode = "classic"
+                first_player = "player"
+                match_mode = "single"
+                auto_random_ai_profession = False
+                skill_mode = None
+                skill_source_cell = None
+                game_state = "local_multi_menu"
+            elif btn is back_button:
+                game_state = "main_menu"
+            return
+        if game_state == "local_multi_menu":
+            for idx, opt_btn in enumerate(local_mode_buttons):
+                if btn is opt_btn:
+                    single_mode = ["classic", "profession"][idx]
+                    skill_mode = None
+                    skill_source_cell = None
+                    return
+            if profession_mode_enabled():
+                for idx, opt_btn in enumerate(local_player1_prof_buttons):
+                    if btn is opt_btn:
+                        selected_profession = PROFESSION_ORDER[idx]
+                        return
+                for idx, opt_btn in enumerate(local_player2_prof_buttons):
+                    if btn is opt_btn:
+                        ai_profession = PROFESSION_ORDER[idx]
+                        return
+            for idx, opt_btn in enumerate(local_first_buttons):
+                if btn is opt_btn:
+                    first_player = ["player", "ai"][idx]
+                    return
+            for idx, opt_btn in enumerate(local_match_buttons):
+                if btn is opt_btn:
+                    match_mode = ["single", "best3"][idx]
+                    return
+            if btn is start_button:
+                auto_random_ai_profession = False
+                start_match(match_mode, quick=False, play_type="local_multi")
+            elif btn is back_button:
+                game_state = "multi_menu"
+            return
         if game_state == "quick_menu":
             for idx, opt_btn in enumerate(difficulty_buttons):
                 if btn is opt_btn:
@@ -1153,7 +1345,7 @@ def main():
             if btn is start_button:
                 first_player = "player"
                 auto_random_ai_profession = profession_mode_enabled()
-                start_match("best3", quick=False)
+                start_match("best3", quick=False, play_type="single_ai")
             elif btn is back_button:
                 game_state = "single_menu"
             return
@@ -1187,7 +1379,7 @@ def main():
                     return
             if btn is start_button:
                 auto_random_ai_profession = False
-                start_match(match_mode, quick=False)
+                start_match(match_mode, quick=False, play_type="single_ai")
             elif btn is back_button:
                 game_state = "single_menu"
             return
@@ -1199,16 +1391,17 @@ def main():
             if btn is skill_button and game_state == "playing":
                 if not profession_mode_enabled():
                     return
-                if current_player != "player" or slash_effect:
+                actor = current_player
+                if not is_human_turn(actor) or slash_effect:
                     return
                 if skill_mode is not None:
                     skill_mode = None
                     skill_source_cell = None
                     clear_player_selection()
                     return
-                if skill_used_by["player"]:
+                if skill_used_by[actor]:
                     return
-                skill_mode = get_skill_mode(current_skill_id("player"))
+                skill_mode = get_skill_mode(current_skill_id(actor))
                 skill_source_cell = None
                 clear_player_selection()
                 return
@@ -1221,9 +1414,9 @@ def main():
                     return_to_menu()
                 elif btn is restart_button:
                     if quick_mode:
-                        start_match("best3", quick=True)
+                        start_match("best3", quick=True, play_type="single_ai")
                     elif match_mode == "best3":
-                        start_match("best3", quick=False)
+                        start_match("best3", quick=False, play_type=play_mode)
                     else:
                         begin_game(first_player)
             elif btn is next_button:
@@ -1560,10 +1753,11 @@ def main():
                 continue
 
             if game_state == "playing":
-                if current_player == "player" and not slash_effect:
+                if is_human_turn() and not slash_effect:
+                    actor = current_player
                     if skill_mode is not None:
                         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                            player_skill_id = current_skill_id("player")
+                            actor_skill_id = current_skill_id(actor)
                             skill_target = None
                             if skill_mode == "shadow_hand":
                                 if skill_source_cell is None:
@@ -1608,8 +1802,8 @@ def main():
                                     continue
                                 skill_target = hit
                             execution = execute_skill(
-                                build_skill_context("player"),
-                                player_skill_id,
+                                build_skill_context(actor),
+                                actor_skill_id,
                                 skill_target,
                             )
                             if not execution.consume_skill:
@@ -1618,16 +1812,16 @@ def main():
                                 if not start_skill_slash(
                                     execution.pending_remove_cells,
                                     execution.fx_cells,
-                                    "player",
+                                    actor,
                                 ):
                                     continue
                             else:
                                 apply_instant_skill_effect(
                                     execution,
-                                    player_skill_id,
-                                    "player",
+                                    actor_skill_id,
+                                    actor,
                                 )
-                            skill_used_by["player"] = True
+                            skill_used_by[actor] = True
                             skill_mode = None
                             skill_source_cell = None
                     else:
@@ -1709,7 +1903,7 @@ def main():
                                 select_touched = set()
                                 cancel_hover = False
                             elif select_row is not None and select_start is not None:
-                                start_slash(select_row, select_start, select_end, "player")
+                                start_slash(select_row, select_start, select_end, actor)
                                 select_row = None
                                 select_start = None
                                 select_end = None
@@ -1727,7 +1921,7 @@ def main():
                 slash_effect.update(dt)
                 if slash_effect.finished():
                     apply_pending()
-            elif current_player == "ai":
+            elif play_mode == "single_ai" and current_player == "ai":
                 ai_timer -= dt
                 if ai_timer <= 0:
                     ai_action = nim_ai_move(
@@ -1953,7 +2147,7 @@ def main():
                 pygame.draw.circle(screen, CIRCLE_HL, (int(x), int(y)), RADIUS, 2)
 
             if game_state == "playing":
-                if profession_mode_enabled():
+                if profession_mode_enabled() and is_human_turn() and not slash_effect:
                     skill_button.text = skill_button_text()
                     skill_button.draw(
                         screen,
@@ -1997,7 +2191,7 @@ def main():
             gap = 6
             right_anchor = info_rect.right - 20
             y = info_rect.y + pad
-            turn_text = f"当前回合：{ROLE_LABELS[current_player]}"
+            turn_text = f"当前回合：{role_label(current_player)}"
             info = draw_battle_text(turn_text, font, (info_rect.x + 20, y))
             round_text = f"第{game_number}局" if quick_mode or match_mode == "best3" else "单盘"
             round_w, _ = small_font.size(round_text)
@@ -2011,10 +2205,17 @@ def main():
             )
             y += font.get_height() + gap
 
-            diff_text = f"难度：{difficulty_text()}"
+            diff_text = (
+                "对战：本地双人"
+                if is_local_multiplayer()
+                else f"难度：{difficulty_text()}"
+            )
             draw_battle_text(diff_text, font, (info_rect.x + 20, y))
             if quick_mode:
-                removed_line = f"碎子数：玩家{match_removed['player']} - AI赌徒{match_removed['ai']}"
+                removed_line = (
+                    f"碎子数：{role_label('player')}{match_removed['player']} - "
+                    f"{role_label('ai')}{match_removed['ai']}"
+                )
                 removed_w, removed_h = small_font.size(removed_line)
                 removed_x = right_anchor - removed_w
                 removed_y = y + (font.get_height() - removed_h) // 2
@@ -2027,8 +2228,10 @@ def main():
                 )
             y += font.get_height() + gap
             if profession_mode_enabled():
-                player_line = f"玩家职业：{profession_text('player')}"
-                ai_line = f"AI职业：{profession_text('ai')}"
+                left_role = role_label("player")
+                right_role = role_label("ai")
+                player_line = f"{left_role}职业：{profession_text('player')}"
+                ai_line = f"{right_role}职业：{profession_text('ai')}"
                 draw_battle_text_with_icon(
                     player_line,
                     small_font,
@@ -2045,10 +2248,16 @@ def main():
 
             if quick_mode:
                 mode_line = "三局两胜"
-                score_line = f"赌分：玩家{match_wins['player']} - AI赌徒{match_wins['ai']}"
+                score_line = (
+                    f"赌分：{role_label('player')}{match_wins['player']} - "
+                    f"{role_label('ai')}{match_wins['ai']}"
+                )
             elif match_mode == "best3":
                 mode_line = "三局两胜"
-                score_line = f"赌分：玩家{match_wins['player']} - AI赌徒{match_wins['ai']}"
+                score_line = (
+                    f"赌分：{role_label('player')}{match_wins['player']} - "
+                    f"{role_label('ai')}{match_wins['ai']}"
+                )
             else:
                 mode_line = "赌局：单盘"
                 score_line = ""
@@ -2072,7 +2281,7 @@ def main():
                 )
             y += small_font.get_height() + gap
 
-            if game_state == "playing" and current_player == "player":
+            if game_state == "playing" and is_human_turn():
                 if not profession_mode_enabled():
                     hint_text = "经典模式：沿同一排连续划棋子，可一次收走连续区间"
                 elif skill_mode is not None:
@@ -2080,8 +2289,8 @@ def main():
                         skill_mode,
                         "技能模式：点击棋子释放技能",
                     )
-                elif current_player == "player" and not skill_used_by["player"]:
-                    hint_text = f"可用技能：{skill_name()}"
+                elif not skill_used_by[current_player]:
+                    hint_text = f"可用技能：{skill_name(current_player)}"
                 else:
                     hint_text = "沿同一排连续划棋子，可一次收走连续区间"
                 if skill_mode == "shadow_hand":
@@ -2151,6 +2360,89 @@ def main():
                     palette=MENU_BUTTON_PALETTE,
                     pressed=is_button_pressed(btn),
                 )
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
+
+        if game_state == "multi_menu":
+            draw_panel("多人游戏")
+            for btn in multi_buttons:
+                btn.draw(
+                    screen,
+                    button_font,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            back_button.draw(
+                screen,
+                button_font,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(back_button),
+            )
+
+        if game_state == "local_multi_menu":
+            draw_panel("本地双人")
+            draw_menu_text("玩法", label_font, (left_x, local_mode_label_y))
+            for idx, btn in enumerate(local_mode_buttons):
+                selected = single_mode == ["classic", "profession"][idx]
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            if profession_mode_enabled():
+                draw_menu_text("玩家1职业", label_font, (left_x, local_player1_prof_label_y))
+                for idx, btn in enumerate(local_player1_prof_buttons):
+                    selected = selected_profession == PROFESSION_ORDER[idx]
+                    btn.draw(
+                        screen,
+                        button_font,
+                        selected=selected,
+                        palette=MENU_BUTTON_PALETTE,
+                        pressed=is_button_pressed(btn),
+                    )
+                draw_menu_text("玩家2职业", label_font, (right_x, local_player2_prof_label_y))
+                for idx, btn in enumerate(local_player2_prof_buttons):
+                    selected = ai_profession == PROFESSION_ORDER[idx]
+                    btn.draw(
+                        screen,
+                        button_font,
+                        selected=selected,
+                        palette=MENU_BUTTON_PALETTE,
+                        pressed=is_button_pressed(btn),
+                    )
+            draw_menu_text("先手", label_font, (right_x, local_first_label_y))
+            for idx, btn in enumerate(local_first_buttons):
+                selected = first_player == ["player", "ai"][idx]
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            draw_menu_text("对局模式", label_font, (right_x, local_match_label_y))
+            for idx, btn in enumerate(local_match_buttons):
+                selected = match_mode == ["single", "best3"][idx]
+                btn.draw(
+                    screen,
+                    button_font,
+                    selected=selected,
+                    palette=MENU_BUTTON_PALETTE,
+                    pressed=is_button_pressed(btn),
+                )
+            start_button.draw(
+                screen,
+                button_font,
+                selected=False,
+                palette=MENU_BUTTON_PALETTE,
+                pressed=is_button_pressed(start_button),
+            )
             back_button.draw(
                 screen,
                 button_font,
@@ -2298,9 +2590,10 @@ def main():
                 "1. 同一横排连续划过即可移除。",
                 "2. 空位不会阻挡，可连续划过。",
                 "3. 单人游戏包含：经典模式、职业模式、自定义游戏。",
-                "4. 经典/职业默认三局两胜，默认玩家先手。",
-                "5. 职业模式中玩家与AI每局各可使用1次技能。",
-                "6. 自定义游戏可选玩法、先手、局制与职业。",
+                "4. 多人游戏包含：本地双人（同鼠标轮流操作）。",
+                "5. 经典/职业默认三局两胜，默认玩家先手。",
+                "6. 职业模式中双方每局各可使用1次技能。",
+                "7. 自定义游戏可选玩法、先手、局制与职业。",
             ]
             rule_y = panel_rect.y + 140
             for line in rules_lines:
@@ -2327,7 +2620,10 @@ def main():
                 center=True,
             )
             draw_battle_text(
-                f"当前赌分 玩家{match_wins['player']} - AI赌徒{match_wins['ai']}",
+                (
+                    f"当前赌分 {role_label('player')}{match_wins['player']} - "
+                    f"{role_label('ai')}{match_wins['ai']}"
+                ),
                 small_font,
                 (WIDTH // 2, HEIGHT // 2 + 10),
                 color=BATTLE_SUBTEXT_MAIN,
@@ -2335,7 +2631,7 @@ def main():
                 center=True,
             )
             draw_battle_text(
-                f"先执：{ROLE_LABELS[current_player]}",
+                f"先执：{role_label(current_player)}",
                 small_font,
                 (WIDTH // 2, HEIGHT // 2 + 38),
                 color=BATTLE_SUBTEXT_MAIN,
@@ -2349,9 +2645,9 @@ def main():
             screen.blit(overlay, (0, 0))
             if match_complete() and (match_mode == "best3" or quick_mode):
                 overall_winner = (
-                    ROLE_LABELS["player"]
+                    role_label("player")
                     if match_wins["player"] > match_wins["ai"]
-                    else ROLE_LABELS["ai"]
+                    else role_label("ai")
                 )
                 draw_battle_text(
                     f"赌局已定：{overall_winner}胜出",
@@ -2362,7 +2658,10 @@ def main():
                     center=True,
                 )
                 draw_battle_text(
-                    f"赌分 玩家{match_wins['player']} - AI赌徒{match_wins['ai']}",
+                    (
+                        f"赌分 {role_label('player')}{match_wins['player']} - "
+                        f"{role_label('ai')}{match_wins['ai']}"
+                    ),
                     small_font,
                     (WIDTH // 2, HEIGHT // 2 + 8),
                     color=BATTLE_SUBTEXT_MAIN,
@@ -2378,7 +2677,7 @@ def main():
                 )
             else:
                 draw_battle_text(
-                    f"本盘胜者：{ROLE_LABELS[winner]}",
+                    f"本盘胜者：{role_label(winner)}",
                     big_font,
                     (WIDTH // 2, HEIGHT // 2 - 20),
                     color=BATTLE_TEXT_MAIN,
