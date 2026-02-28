@@ -181,24 +181,6 @@ def _apply_normal(rows, move):
     return board, removed
 
 
-def _cross_targets(rows, center_row, center_idx):
-    cells = []
-    for row_idx, idx in (
-        (center_row, center_idx),
-        (center_row, center_idx - 1),
-        (center_row, center_idx + 1),
-        (center_row - 1, center_idx),
-        (center_row + 1, center_idx),
-    ):
-        if row_idx < 0 or row_idx >= len(rows):
-            continue
-        if idx < 0 or idx >= len(rows[row_idx]):
-            continue
-        if rows[row_idx][idx]:
-            cells.append((row_idx, idx))
-    return cells
-
-
 def _opponent_can_finish_next(rows, ai_context):
     for move in _all_normal_moves(rows):
         next_rows, _removed = _apply_normal(rows, move)
@@ -207,18 +189,9 @@ def _opponent_can_finish_next(rows, ai_context):
 
     if ai_context.get("opponent_skill_used", True):
         return False
-    if ai_context.get("opponent_profession") != "swordsman":
-        return False
-
-    remaining = _active_count(rows)
-    if remaining == 0:
-        return False
-    for row_idx, row in enumerate(rows):
-        for idx, active in enumerate(row):
-            if not active:
-                continue
-            if len(_cross_targets(rows, row_idx, idx)) >= remaining:
-                return True
+    opponent_finish_checker = ai_context.get("opponent_can_finish_with_skill")
+    if callable(opponent_finish_checker):
+        return bool(opponent_finish_checker(rows, ai_context))
     return False
 
 
@@ -246,76 +219,33 @@ def _evaluate_result(rows_before, rows_after, removed_count, ai_context):
     return score
 
 
-def _best_cross_action(rows, ai_context):
-    remaining = _active_count(rows)
-    best_action = None
-    best_score = -10**9
-    best_removed = -1
-
-    for row_idx, row in enumerate(rows):
-        for idx, active in enumerate(row):
-            if not active:
-                continue
-            hit_cells = _cross_targets(rows, row_idx, idx)
-            removed = len(hit_cells)
-            if removed <= 0:
-                continue
-            board = _copy_rows(rows)
-            for hit_row, hit_idx in hit_cells:
-                board[hit_row][hit_idx] = False
-            score = _evaluate_result(rows, board, removed, ai_context)
-            if score > best_score or (score == best_score and removed > best_removed):
-                best_score = score
-                best_removed = removed
-                best_action = {"type": "skill_cross", "row": row_idx, "idx": idx}
-
-    immediate_win = best_removed >= remaining and remaining > 0
-    return best_action, best_score, immediate_win
-
-
-def _count_cell_threat(rows, target_row, target_idx):
-    threat = 0
-    for row_idx, start_idx, end_idx in _all_normal_moves(rows):
-        if row_idx == target_row and start_idx <= target_idx <= end_idx:
-            threat += 1
-    return threat
-
-
-def _best_shield_action(rows, ai_context):
-    shielded_cells = {
-        tuple(cell)
-        for cell in ai_context.get("shielded_cells", [])
-        if isinstance(cell, (tuple, list)) and len(cell) == 2
-    }
-    remaining = _active_count(rows)
-    base_nim = _nim_sum(rows)
-    opp_can_finish = _opponent_can_finish_next(rows, ai_context)
-
-    best_action = None
-    best_score = -10**9
-    for row_idx, row in enumerate(rows):
-        for idx, active in enumerate(row):
-            if not active or (row_idx, idx) in shielded_cells:
-                continue
-            threat = _count_cell_threat(rows, row_idx, idx)
-            if remaining <= 4:
-                threat *= 2
-            if remaining <= 2:
-                threat *= 2
-            score = threat * 9
-            if base_nim == 0:
-                score += 14
-            if opp_can_finish:
-                score += 30
-            if score > best_score:
-                best_score = score
-                best_action = {"type": "skill_shield", "row": row_idx, "idx": idx}
-    return best_action, best_score, False
-
-
 def _to_normal_action(move):
     row_idx, start_idx, end_idx = move
     return {"type": "normal", "row": row_idx, "start": start_idx, "end": end_idx}
+
+
+def copy_rows(rows):
+    return _copy_rows(rows)
+
+
+def active_count(rows):
+    return _active_count(rows)
+
+
+def nim_sum(rows):
+    return _nim_sum(rows)
+
+
+def all_normal_moves(rows):
+    return _all_normal_moves(rows)
+
+
+def apply_normal(rows, move):
+    return _apply_normal(rows, move)
+
+
+def evaluate_result(rows_before, rows_after, removed_count, ai_context):
+    return _evaluate_result(rows_before, rows_after, removed_count, ai_context)
 
 
 def nim_ai_move(rows, difficulty, ai_context=None):
@@ -325,7 +255,7 @@ def nim_ai_move(rows, difficulty, ai_context=None):
     Backward compatibility:
     - If ai_context is None, return (row_idx, start_idx, end_idx) like the old API.
     - If ai_context is provided, return an action dict with type:
-      normal / skill_cross / skill_shield
+      normal / skill
     """
     legal_normal_moves = _all_normal_moves(rows)
     if not legal_normal_moves:
@@ -350,13 +280,10 @@ def nim_ai_move(rows, difficulty, ai_context=None):
     if ai_context.get("ai_skill_used", True):
         return normal_action
 
-    profession = ai_context.get("ai_profession", "paladin")
-    if profession == "swordsman":
-        skill_action, skill_score, skill_immediate_win = _best_cross_action(rows, ai_context)
-    elif profession == "paladin":
-        skill_action, skill_score, skill_immediate_win = _best_shield_action(rows, ai_context)
-    else:
-        skill_action, skill_score, skill_immediate_win = (None, -10**9, False)
+    skill_policy = ai_context.get("skill_policy")
+    if not callable(skill_policy):
+        return normal_action
+    skill_action, skill_score, skill_immediate_win = skill_policy(rows, ai_context)
 
     if not skill_action:
         return normal_action

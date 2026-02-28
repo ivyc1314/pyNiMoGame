@@ -5,6 +5,7 @@ import math
 
 import pygame
 
+from ai_profession_policy import get_opponent_finish_checker, get_skill_policy
 from constants import HEIGHT, RADIUS, WIDTH
 from game_logic import (
     find_circle,
@@ -13,6 +14,23 @@ from game_logic import (
     get_segment_bounds,
     nim_ai_move,
     update_touched_by_segment,
+)
+from profession_registry import (
+    get_default_profession,
+    get_profession_ids,
+    get_profession_intro_lines,
+    get_profession_label,
+    get_profession_skill_id,
+)
+from skill_system import (
+    SkillUseContext,
+    consume_shield as consume_shield_state,
+    execute_skill,
+    get_skill_mode,
+    get_skill_name,
+    reset_shield as reset_shield_state,
+    shield_turns_for_cell as shield_turns_for_cell_state,
+    update_shield_states_after_action as update_shield_states_after_action_state,
 )
 from ui_components import (
     Button,
@@ -74,24 +92,7 @@ BATTLE_BUTTON_PALETTE = {
     "shadow": (0, 0, 0, 92),
 }
 ROLE_LABELS = {"player": "玩家", "ai": "AI赌徒"}
-PROFESSION_ORDER = ["paladin", "swordsman"]
-PROFESSION_LABELS = {"paladin": "圣骑士", "swordsman": "剑士"}
-PROFESSION_SKILLS = {
-    "paladin": {"name": "圣盾", "mode": "shield"},
-    "swordsman": {"name": "十字斩", "mode": "cross"},
-}
-PROFESSION_INTRO_LINES = {
-    "paladin": [
-        "定位：稳健防守",
-        "技能【圣盾】：给1枚完整棋子加护盾",
-        "护盾生效期间可抵挡1次移除",
-    ],
-    "swordsman": [
-        "定位：强势进攻",
-        "技能【十字斩】：以目标为中心展开",
-        "可一次清除横向与纵向目标",
-    ],
-}
+PROFESSION_ORDER = get_profession_ids()
 SHIELD_FILL_COLOR = (216, 170, 74)
 SHIELD_INNER_COLOR = (236, 197, 108)
 SHIELD_EDGE_COLOR = (255, 233, 176)
@@ -99,6 +100,10 @@ SHIELD_HILITE_COLOR = (255, 247, 220)
 SHIELD_CROSS_COLOR = (170, 118, 44)
 CROSS_FX_OFFSET_X = -4
 CROSS_FX_OFFSET_Y = -3
+SKILL_MODE_HINTS = {
+    "shield": "圣盾模式：点击一个完整棋子施加护盾",
+    "cross": "十字斩模式：点击中心棋子释放技能",
+}
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
@@ -424,8 +429,8 @@ def main():
     match_mode = "single"
     quick_mode = False
     single_mode = "classic"
-    selected_profession = "paladin"
-    ai_profession = "paladin"
+    selected_profession = get_default_profession()
+    ai_profession = get_default_profession()
     auto_random_ai_profession = False
     game_number = 1
     match_wins = {"player": 0, "ai": 0}
@@ -519,7 +524,7 @@ def main():
                 profession_btn_w,
                 btn_h,
             ),
-            PROFESSION_LABELS[key],
+            get_profession_label(key),
         )
         for i, key in enumerate(PROFESSION_ORDER)
     ]
@@ -562,7 +567,7 @@ def main():
                 profession_btn_w,
                 btn_h,
             ),
-            PROFESSION_LABELS[key],
+            get_profession_label(key),
         )
         for i, key in enumerate(PROFESSION_ORDER)
     ]
@@ -598,7 +603,7 @@ def main():
                 profession_btn_w,
                 btn_h,
             ),
-            PROFESSION_LABELS[key],
+            get_profession_label(key),
         )
         for i, key in enumerate(PROFESSION_ORDER)
     ]
@@ -633,14 +638,17 @@ def main():
 
     def profession_text(actor="player"):
         profession = selected_profession if actor == "player" else ai_profession
-        return PROFESSION_LABELS.get(profession, PROFESSION_LABELS[PROFESSION_ORDER[0]])
+        return get_profession_label(profession)
 
     def profession_mode_enabled():
         return single_mode == "profession"
 
-    def skill_name(actor="player"):
+    def current_skill_id(actor="player"):
         profession = selected_profession if actor == "player" else ai_profession
-        return PROFESSION_SKILLS[profession]["name"]
+        return get_profession_skill_id(profession)
+
+    def skill_name(actor="player"):
+        return get_skill_name(current_skill_id(actor))
 
     def skill_button_text():
         if skill_mode is not None:
@@ -649,66 +657,20 @@ def main():
             return f"{skill_name()}(已用)"
         return skill_name()
 
+    def build_skill_context(actor):
+        return SkillUseContext(rows=rows, actor=actor, shield_states=shield_states)
+
     def reset_shield(owner=None):
-        if owner is None:
-            for side in ("player", "ai"):
-                shield_states[side]["piece"] = None
-                shield_states[side]["turns_left"] = 0
-                shield_states[side]["action_count"] = 0
-            return
-        shield_states[owner]["piece"] = None
-        shield_states[owner]["turns_left"] = 0
-        shield_states[owner]["action_count"] = 0
-
-    def set_shield(owner, row_idx, idx):
-        shield_states[owner]["piece"] = (row_idx, idx)
-        shield_states[owner]["turns_left"] = 2
-        shield_states[owner]["action_count"] = 0
-
-    def cell_has_shield(row_idx, idx):
-        return (
-            shield_states["player"]["piece"] == (row_idx, idx)
-            or shield_states["ai"]["piece"] == (row_idx, idx)
-        )
+        reset_shield_state(shield_states, owner)
 
     def shield_turns_for_cell(row_idx, idx):
-        turns_left = 0
-        for owner in ("player", "ai"):
-            if shield_states[owner]["piece"] == (row_idx, idx):
-                turns_left = max(turns_left, shield_states[owner]["turns_left"])
-        return turns_left
+        return shield_turns_for_cell_state(shield_states, row_idx, idx)
 
     def consume_shield(row_idx, idx):
-        for owner in ("player", "ai"):
-            if shield_states[owner]["piece"] == (row_idx, idx):
-                reset_shield(owner)
-                return True
-        return False
+        return consume_shield_state(shield_states, row_idx, idx)
 
     def update_shield_states_after_action():
-        for owner in ("player", "ai"):
-            piece = shield_states[owner]["piece"]
-            if piece is None:
-                shield_states[owner]["action_count"] = 0
-                continue
-            shield_row, shield_idx = piece
-            shield_valid = (
-                0 <= shield_row < len(rows)
-                and 0 <= shield_idx < len(rows[shield_row])
-                and rows[shield_row][shield_idx]
-            )
-            if not shield_valid:
-                reset_shield(owner)
-                continue
-            if shield_states[owner]["turns_left"] <= 0:
-                reset_shield(owner)
-                continue
-            shield_states[owner]["action_count"] += 1
-            if shield_states[owner]["action_count"] >= 2:
-                shield_states[owner]["action_count"] = 0
-                shield_states[owner]["turns_left"] -= 1
-                if shield_states[owner]["turns_left"] <= 0:
-                    reset_shield(owner)
+        update_shield_states_after_action_state(shield_states, rows)
 
     def clear_player_selection():
         nonlocal selecting, select_row, select_start, select_end
@@ -722,26 +684,6 @@ def main():
         slash_points = []
         last_pos = None
         cancel_hover = False
-
-    def cross_slash_targets(center_row, center_idx):
-        candidates = [
-            (center_row, center_idx),
-            (center_row, center_idx - 1),
-            (center_row, center_idx + 1),
-            (center_row - 1, center_idx),
-            (center_row + 1, center_idx),
-        ]
-        fx_cells = []
-        hit_cells = []
-        for row_idx, idx in candidates:
-            if row_idx < 0 or row_idx >= len(rows):
-                continue
-            if idx < 0 or idx >= len(rows[row_idx]):
-                continue
-            fx_cells.append((row_idx, idx))
-            if rows[row_idx][idx]:
-                hit_cells.append((row_idx, idx))
-        return hit_cells, fx_cells
 
     def generate_rows():
         while True:
@@ -1029,7 +971,7 @@ def main():
                     return
                 if skill_used_by["player"]:
                     return
-                skill_mode = PROFESSION_SKILLS[selected_profession]["mode"]
+                skill_mode = get_skill_mode(current_skill_id("player"))
                 clear_player_selection()
                 return
             if btn is exit_button:
@@ -1318,17 +1260,23 @@ def main():
                             hit = find_circle(rows, event.pos)
                             if not hit:
                                 continue
-                            row_idx, idx = hit
-                            if skill_mode == "shield":
-                                if rows[row_idx][idx] and not cell_has_shield(row_idx, idx):
-                                    set_shield("player", row_idx, idx)
-                                    skill_used_by["player"] = True
-                                    skill_mode = None
-                            elif skill_mode == "cross":
-                                hit_cells, fx_cells = cross_slash_targets(row_idx, idx)
-                                if start_skill_slash(hit_cells, fx_cells, "player"):
-                                    skill_used_by["player"] = True
-                                    skill_mode = None
+                            player_skill_id = current_skill_id("player")
+                            execution = execute_skill(
+                                build_skill_context("player"),
+                                player_skill_id,
+                                hit,
+                            )
+                            if not execution.consume_skill:
+                                continue
+                            if execution.start_animation:
+                                if not start_skill_slash(
+                                    execution.pending_remove_cells,
+                                    execution.fx_cells,
+                                    "player",
+                                ):
+                                    continue
+                            skill_used_by["player"] = True
+                            skill_mode = None
                     else:
                         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                             selecting = True
@@ -1431,6 +1379,10 @@ def main():
                             "ai_skill_used": skill_used_by["ai"],
                             "opponent_profession": selected_profession,
                             "opponent_skill_used": skill_used_by["player"],
+                            "skill_policy": get_skill_policy(ai_profession),
+                            "opponent_can_finish_with_skill": get_opponent_finish_checker(
+                                selected_profession
+                            ),
                             "shielded_cells": [
                                 shield_states["player"]["piece"],
                                 shield_states["ai"]["piece"],
@@ -1440,27 +1392,34 @@ def main():
                     executed = False
                     if isinstance(ai_action, dict):
                         action_type = ai_action.get("type")
-                        if action_type == "skill_shield":
-                            row_idx = ai_action.get("row", -1)
-                            idx = ai_action.get("idx", -1)
+                        if action_type == "skill":
+                            skill_id = ai_action.get("skill_id")
+                            target = ai_action.get("target")
                             if (
-                                0 <= row_idx < len(rows)
-                                and 0 <= idx < len(rows[row_idx])
-                                and rows[row_idx][idx]
-                                and not cell_has_shield(row_idx, idx)
+                                isinstance(target, (tuple, list))
+                                and len(target) == 2
+                                and isinstance(skill_id, str)
                             ):
-                                set_shield("ai", row_idx, idx)
-                                skill_used_by["ai"] = True
-                                ai_timer = AI_DELAY
-                                executed = True
-                        elif action_type == "skill_cross":
-                            row_idx = ai_action.get("row", -1)
-                            idx = ai_action.get("idx", -1)
-                            if 0 <= row_idx < len(rows) and 0 <= idx < len(rows[row_idx]):
-                                hit_cells, fx_cells = cross_slash_targets(row_idx, idx)
-                                if start_skill_slash(hit_cells, fx_cells, "ai"):
-                                    skill_used_by["ai"] = True
-                                    executed = True
+                                row_idx = int(target[0])
+                                idx = int(target[1])
+                                execution = execute_skill(
+                                    build_skill_context("ai"),
+                                    skill_id,
+                                    (row_idx, idx),
+                                )
+                                if execution.consume_skill:
+                                    if execution.start_animation:
+                                        if start_skill_slash(
+                                            execution.pending_remove_cells,
+                                            execution.fx_cells,
+                                            "ai",
+                                        ):
+                                            skill_used_by["ai"] = True
+                                            executed = True
+                                    else:
+                                        skill_used_by["ai"] = True
+                                        ai_timer = AI_DELAY
+                                        executed = True
                         elif action_type == "normal":
                             row_idx = ai_action.get("row", -1)
                             start_idx = ai_action.get("start", -1)
@@ -1682,13 +1641,14 @@ def main():
                 )
                 y += small_font.get_height() + gap
 
-            if game_state == "playing":
+            if game_state == "playing" and current_player == "player":
                 if not profession_mode_enabled():
                     hint_text = "经典模式：沿同一排连续划棋子，可一次收走连续区间"
-                elif skill_mode == "shield":
-                    hint_text = "圣盾模式：点击一个完整棋子施加护盾"
-                elif skill_mode == "cross":
-                    hint_text = "十字斩模式：点击中心棋子释放技能"
+                elif skill_mode is not None:
+                    hint_text = SKILL_MODE_HINTS.get(
+                        skill_mode,
+                        "技能模式：点击棋子释放技能",
+                    )
                 elif current_player == "player" and not skill_used_by["player"]:
                     hint_text = f"可用技能：{skill_name()}"
                 else:
@@ -1781,7 +1741,7 @@ def main():
                     (right_x, quick_y),
                 )
                 quick_y += label_font.get_height() + 6
-                for line in PROFESSION_INTRO_LINES.get(selected_profession, []):
+                for line in get_profession_intro_lines(selected_profession):
                     draw_menu_text(line, small_font, (right_x, quick_y))
                     quick_y += 28
                 quick_y += 8
