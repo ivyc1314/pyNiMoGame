@@ -2,6 +2,7 @@ import glob
 import os
 import random
 import math
+import sys
 
 import pygame
 
@@ -126,6 +127,13 @@ ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
 
 
+def _asset_root_dir():
+    # PyInstaller one-file extracts bundled data into _MEIPASS.
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def main():
     pygame.mixer.pre_init(22050, -16, 1, 512)
     pygame.init()
@@ -167,8 +175,9 @@ def main():
         "custom_menu",
         "rules",
     }
-    picture_dir = os.path.join(os.path.dirname(__file__), "picture")
-    music_dir = os.path.join(os.path.dirname(__file__), "music")
+    asset_root = _asset_root_dir()
+    picture_dir = os.path.join(asset_root, "picture")
+    music_dir = os.path.join(asset_root, "music")
     menu_bg_candidates = []
     for ext in ("*.png", "*.jpg", "*.jpeg", "*.bmp", "*.webp"):
         menu_bg_candidates.extend(sorted(glob.glob(os.path.join(picture_dir, ext))))
