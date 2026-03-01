@@ -742,7 +742,7 @@ def main():
             ),
             label,
         )
-        for i, label in enumerate(["玩家1先手", "玩家2先手"])
+        for i, label in enumerate(["玩家1", "玩家2"])
     ]
     local_match_label_y = local_first_buttons_y + btn_h + 12
     local_match_buttons_y = local_match_label_y + label_font.get_height() + 6
@@ -2292,7 +2292,7 @@ def main():
 
             if game_state == "playing" and is_human_turn():
                 if not profession_mode_enabled():
-                    hint_text = "经典模式：沿同一排连续划棋子，可一次收走连续区间"
+                    hint_text = "沿同一排连续划棋子，可一次收走连续区间"
                 elif skill_mode is not None:
                     hint_text = SKILL_MODE_HINTS.get(
                         skill_mode,
