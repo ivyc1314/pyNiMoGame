@@ -125,6 +125,8 @@ PROFESSION_ICON_SCALE = {"thief": 1.18}
 
 ROW_INIT = [3, 4, 5]
 AI_DELAY = 0.4
+BATTLE_NOTICE_DURATION = 1.2
+BATTLE_NOTICE_FADE_OUT = 0.2
 
 
 def _asset_root_dir():
@@ -515,6 +517,8 @@ def main():
     slash_effect = None
     pending_remove = None
     ai_timer = 0.0
+    battle_notice_text = ""
+    battle_notice_timer = 0.0
 
     panel_rect = pygame.Rect(90, 70, WIDTH - 180, HEIGHT - 140)
     title_y = panel_rect.y + 54
@@ -850,6 +854,11 @@ def main():
             return LOCAL_ROLE_LABELS[actor]
         return ROLE_LABELS[actor]
 
+    def show_battle_notice(text, duration=BATTLE_NOTICE_DURATION):
+        nonlocal battle_notice_text, battle_notice_timer
+        battle_notice_text = text
+        battle_notice_timer = max(0.0, duration)
+
     def build_skill_context(actor):
         return SkillUseContext(
             rows=rows,
@@ -1055,12 +1064,15 @@ def main():
 
     def clear_round_state():
         nonlocal winner, slash_effect, pending_remove, skill_mode, skill_source_cell
+        nonlocal battle_notice_text, battle_notice_timer
         winner = None
         clear_player_selection()
         slash_effect = None
         pending_remove = None
         skill_mode = None
         skill_source_cell = None
+        battle_notice_text = ""
+        battle_notice_timer = 0.0
         iron_bar_edges.clear()
         shadow_empty_cells.clear()
         reset_shield()
@@ -1532,6 +1544,53 @@ def main():
             screen.blit(label, pos)
         return label
 
+    def draw_battle_notice():
+        if not battle_notice_text or battle_notice_timer <= 0:
+            return
+        fade_ratio = 1.0
+        if BATTLE_NOTICE_FADE_OUT > 0 and battle_notice_timer < BATTLE_NOTICE_FADE_OUT:
+            fade_ratio = max(0.0, battle_notice_timer / BATTLE_NOTICE_FADE_OUT)
+        text_alpha = int(255 * fade_ratio)
+        panel_alpha = int(188 * fade_ratio)
+        border_alpha = int(200 * fade_ratio)
+
+        label = font.render(battle_notice_text, True, BATTLE_TEXT_MAIN)
+        shadow_label = font.render(battle_notice_text, True, BATTLE_TEXT_SHADOW)
+        pad_x = 20
+        pad_y = 12
+        notice_rect = pygame.Rect(
+            0,
+            0,
+            label.get_width() + pad_x * 2,
+            label.get_height() + pad_y * 2,
+        )
+        notice_rect.center = (WIDTH // 2, HEIGHT // 2 - 24)
+
+        panel = pygame.Surface(notice_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            panel,
+            (12, 8, 5, panel_alpha),
+            panel.get_rect(),
+            border_radius=14,
+        )
+        pygame.draw.rect(
+            panel,
+            (*BATTLE_PANEL_BORDER_GOLD, border_alpha),
+            panel.get_rect(),
+            2,
+            border_radius=14,
+        )
+        screen.blit(panel, notice_rect.topleft)
+
+        shadow_label.set_alpha(text_alpha)
+        label.set_alpha(text_alpha)
+        shadow_rect = shadow_label.get_rect(
+            center=(notice_rect.centerx + 1, notice_rect.centery + 2)
+        )
+        label_rect = label.get_rect(center=notice_rect.center)
+        screen.blit(shadow_label, shadow_rect)
+        screen.blit(label, label_rect)
+
     def draw_battle_text_with_icon(
         text,
         text_font,
@@ -1925,6 +1984,11 @@ def main():
             if intro_timer <= 0:
                 game_state = "playing"
 
+        if battle_notice_timer > 0:
+            battle_notice_timer = max(0.0, battle_notice_timer - dt)
+            if battle_notice_timer <= 0:
+                battle_notice_text = ""
+
         if game_state == "playing":
             if slash_effect:
                 slash_effect.update(dt)
@@ -1950,6 +2014,16 @@ def main():
                                 shield_states["player"]["piece"],
                                 shield_states["ai"]["piece"],
                             ],
+                            "shield_state_snapshot": {
+                                "player": {
+                                    "piece": shield_states["player"]["piece"],
+                                    "turns_left": int(shield_states["player"]["turns_left"]),
+                                },
+                                "ai": {
+                                    "piece": shield_states["ai"]["piece"],
+                                    "turns_left": int(shield_states["ai"]["turns_left"]),
+                                },
+                            },
                             "blocked_edges": iron_bar_edges,
                         },
                     )
@@ -1968,6 +2042,10 @@ def main():
                                         parsed_target,
                                     )
                                     if execution.consume_skill:
+                                        skill_notice = (
+                                            f"{role_label('ai')} 发动技能："
+                                            f"{get_skill_name(skill_id)}"
+                                        )
                                         if execution.start_animation:
                                             if start_skill_slash(
                                                 execution.pending_remove_cells,
@@ -1975,6 +2053,7 @@ def main():
                                                 "ai",
                                             ):
                                                 skill_used_by["ai"] = True
+                                                show_battle_notice(skill_notice)
                                                 executed = True
                                         else:
                                             apply_instant_skill_effect(
@@ -1983,6 +2062,7 @@ def main():
                                                 "ai",
                                             )
                                             skill_used_by["ai"] = True
+                                            show_battle_notice(skill_notice)
                                             if skill_id != "shadow_hand":
                                                 ai_timer = AI_DELAY
                                             executed = True
@@ -2005,6 +2085,20 @@ def main():
                             ai_context={
                                 "profession_mode": False,
                                 "ai_skill_used": True,
+                                "shielded_cells": [
+                                    shield_states["player"]["piece"],
+                                    shield_states["ai"]["piece"],
+                                ],
+                                "shield_state_snapshot": {
+                                    "player": {
+                                        "piece": shield_states["player"]["piece"],
+                                        "turns_left": int(shield_states["player"]["turns_left"]),
+                                    },
+                                    "ai": {
+                                        "piece": shield_states["ai"]["piece"],
+                                        "turns_left": int(shield_states["ai"]["turns_left"]),
+                                    },
+                                },
                                 "blocked_edges": iron_bar_edges,
                             },
                         )
@@ -2715,6 +2809,9 @@ def main():
                     palette=BATTLE_BUTTON_PALETTE,
                     pressed=is_button_pressed(menu_button),
                 )
+
+        if game_state in ("playing", "gameover", "round_intro"):
+            draw_battle_notice()
 
         pygame.display.flip()
 
